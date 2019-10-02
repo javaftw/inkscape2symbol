@@ -1,32 +1,15 @@
-Plugin Builder Results
+Readme:
 
-Your plugin Inkscape2Symbol was created in:
-    /home/henniek/PythonProjects/QGIS_plugins/Inkscape2Symbol/inkscape2symbol
+In Inkscape
+-----------
+1. Create shape
+2. Set document size to shape size
+3. Save as Plain SVG
 
-Your QGIS plugin directory is located at:
-    /home/henniek/.local/share/QGIS/QGIS3/profiles/default/python/plugins
-
-What's Next:
-
-  * Copy the entire directory containing your new plugin to the QGIS plugin
-    directory
-
-  * Compile the resources file using pyrcc5
-
-  * Run the tests (``make test``)
-
-  * Test the plugin by enabling it in the QGIS plugin manager
-
-  * Customize it by editing the implementation file: ``inkscape2symbol.py``
-
-  * Create your own custom icon, replacing the default icon.png
-
-  * Modify your user interface by opening Inkscape2Symbol_dialog_base.ui in Qt Designer
-
-  * You can use the Makefile to compile your Ui and resource files when
-    you make changes. This requires GNU make (gmake)
-
-For more information, see the PyQGIS Developer Cookbook at:
-http://www.qgis.org/pyqgis-cookbook/index.html
-
-(C) 2011-2018 GeoApt LLC - geoapt.com
+In QGIS
+-------
+1. Open Inkscape2Symbol dialog
+2. Choose your svg that you created in inkscape
+3. Choose the destination folder (see Settings -> System -> SVG Paths)
+4. Set the default fill and outline colours
+5. Click OK
