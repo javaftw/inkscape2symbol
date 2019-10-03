@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/inkscape2symbol" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>
