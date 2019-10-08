@@ -21,7 +21,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QUrl
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction
 
@@ -66,19 +66,12 @@ class Inkscape2Symbol:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
+        
+        #-------------------------constants
+    
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
-        """Get the translation for a string using Qt translation API.
-
-        We implement this ourselves since we do not inherit QObject.
-
-        :param message: String for translation.
-        :type message: str, QString
-
-        :returns: Translated version of message.
-        :rtype: QString
-        """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('Inkscape2Symbol', message)
 
@@ -94,44 +87,6 @@ class Inkscape2Symbol:
         status_tip=None,
         whats_this=None,
         parent=None):
-        """Add a toolbar icon to the toolbar.
-
-        :param icon_path: Path to the icon for this action. Can be a resource
-            path (e.g. ':/plugins/foo/bar.png') or a normal file system path.
-        :type icon_path: str
-
-        :param text: Text that should be shown in menu items for this action.
-        :type text: str
-
-        :param callback: Function to be called when the action is triggered.
-        :type callback: function
-
-        :param enabled_flag: A flag indicating if the action should be enabled
-            by default. Defaults to True.
-        :type enabled_flag: bool
-
-        :param add_to_menu: Flag indicating whether the action should also
-            be added to the menu. Defaults to True.
-        :type add_to_menu: bool
-
-        :param add_to_toolbar: Flag indicating whether the action should also
-            be added to the toolbar. Defaults to True.
-        :type add_to_toolbar: bool
-
-        :param status_tip: Optional text to show in a popup when mouse pointer
-            hovers over the action.
-        :type status_tip: str
-
-        :param parent: Parent widget for the new action. Defaults None.
-        :type parent: QWidget
-
-        :param whats_this: Optional text to show in the status bar when the
-            mouse pointer hovers over the action.
-
-        :returns: The action that was created. Note that the action is also
-            added to self.actions list.
-        :rtype: QAction
-        """
 
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
@@ -169,6 +124,7 @@ class Inkscape2Symbol:
 
         # will be set False in run()
         self.first_start = True
+        self.outputFileSaved = False
 
 
     def unload(self):
@@ -188,51 +144,108 @@ class Inkscape2Symbol:
         if self.first_start == True:
             self.first_start = False
             self.dlg = Inkscape2SymbolDialog()
-            
+
+        
+        self.dlg.inputfile.fileChanged.connect(self.infileChangedAction)
         self.dlg.inputfile.setFilter("*.svg")#only display files with the .svg extension
-        self.dlg.outputfolder.setStorageMode(3);#was QgsFileWidget.SaveFile
+        self.dlg.outputfolder.fileChanged.connect(self.outfileChangedAction)
+        self.dlg.fillColour.colorChanged.connect(self.fillColAction)
+        self.dlg.outlineColour.colorChanged.connect(self.outlineColAction)
+        #
+        self.dlg.outputfolder.setStorageMode(3)#was QgsFileWidget.SaveFile
         #--set default colours (r, g, b, a)
         self.dlg.fillColour.setColor(QColor(220, 220, 220, 255))
         self.dlg.outlineColour.setColor(QColor(0, 0, 0, 255))
+        
+        #-- graphicsView SVG display
+        
+        #--svg in child widget
 
         #=============================================show the dialog
         self.dlg.show()
         # Run the dialog event loop
         result = self.dlg.exec_()
+        
         # See if OK was pressed
         if result:
             #open the Inkscape-generated svg...
+            self.recompileSvg()
+    
+        
+    def recompileSvg(self):
+        if len(self.dlg.inputfile.filePath()) and  len(self.dlg.outputfolder.filePath()) > 0:
+            #----read file and store content
             infile = self.dlg.inputfile.filePath()
             inputsvg = open(infile, 'r')
-            #read the content of the input file
-            svgcontent = inputsvg.readlines()
+            svgcontent = inputsvg.read()
             inputsvg.close()
+            #--cleanup
+            svgcontent=svgcontent.replace("\n"," ")
+            while "  " in svgcontent:
+                svgcontent=svgcontent.replace("  "," ")
+            #print(svgcontent)
+            #--extract width, height and viewBox from the <svg> tag
+            new_svg_tag = '<svg enable-background="new {2}" width="{0}" height="{1}" viewBox="{2}" xmlns="http://www.w3.org/2000/svg">*</svg>'
+            new_style_attrib = 'style="opacity:1;fill:{0};fill-opacity:1;stroke:{1};stroke-width:{2};stroke-opacity:1" fill="param(fill) {0}" stroke="param(outline) {1}" stroke-width="param(outline-width) {2}"'
+            if "<svg " in svgcontent:
+                idxS = svgcontent.find("<svg ")
+                idxE = svgcontent.find(">", idxS)
+                svgtag = svgcontent[idxS:idxE]
+                svg_attrib_vals = []
+                svg_attribs = ["width=", "height=", "viewBox="]
+                i=0
+                while i < len(svg_attribs):
+                    if svg_attribs[i] in svgtag:
+                        idxS = svgtag.find(svg_attribs[i])
+                        idxE = svgtag.find("\"", idxS+len(svg_attribs[i])+1)
+                        svg_attrib_vals.append(svgtag[idxS+len(svg_attribs[i])+1:idxE])
+                    i += 1
+                new_svg_tag = new_svg_tag.format(svg_attrib_vals[0],svg_attrib_vals[1],svg_attrib_vals[2])
+            #--grab the <g> tag
+            gcontent = ""
+            new_gcontent = ""
+            gcontent_arr = []
+            if "<g " in svgcontent:
+                indexStart = svgcontent.find("<g ")
+                indexEnd = svgcontent.find("</g>", indexStart)
+                gcontent = svgcontent[indexStart:indexEnd+4]
+                gcontent = gcontent.replace("> <",">\n<")
+                #--break the <g> tag up into constituents
+                gcontent_arr = gcontent.split("\n")
+            if len(gcontent_arr) > 1:
+                if "transform" in gcontent_arr[0]:
+                    stemp = gcontent_arr[0]
+                    idxS = stemp.find("transform")
+                    idxE = stemp.find("\"", idxS+11)
+                    gcontent_arr[0] = "<g {0}>".format(stemp[idxS:idxE+1])
+                for s in gcontent_arr:
+                    if "style=" in s:
+                        idxS = s.find("style=\"")
+                        idxE = s.find("\"", idxS+7)
+                        s1 = s[idxS:idxE+1]
+                        s2 = s.replace(s1,new_style_attrib.format(self.dlg.fillColour.color().name(),self.dlg.outlineColour.color().name(),"0.2"))
+                        new_gcontent += s2;
+            new_svg = new_svg_tag.replace("*", gcontent_arr[0] + new_gcontent+"</g>")
             #create a new output svg-format file
             outfolder = self.dlg.outputfolder.filePath()
             if not outfolder.endswith(".svg"):
                 outfolder += ".svg"
-            #assemble the contents to write to the output file
-            symbolcontent = ""
-            for line in svgcontent:
-                #trim size (lots of unnecessary 'inkscape' attributes)
-                if not "inkscape" in line:
-                    #replace the "style" so that user can change it
-                    if "style=" in line:
-                        #get fill and outline colours from dialog
-                        fill = self.dlg.fillColour.color()
-                        outline = self.dlg.outlineColour.color()
-                        #do string replacement
-                        templine = "fill='param(fill) {0}' stroke='param(outline) {1}' stroke-width='param(outline-width) 0.2'".format(fill.name(), outline.name())
-                        if "/>" in line:
-                            templine += " />"
-                        templine +="\n"
-                        line = templine
-                    symbolcontent += line
-                else: #the term 'inkscape' appeared, skipping it
-                    if "/>" in line:
-                        symbolcontent += " />\n"
             #write the output file
             #beware of permissions
             with open(outfolder, 'w') as outputsvg:
-                outputsvg.write(symbolcontent)
+                outputsvg.write(new_svg)
             inputsvg.close()
+    
+    def infileChangedAction(self):
+        self.dlg.webViewOriginal.load(QUrl('file://'+self.dlg.inputfile.filePath()))
+    
+    def outfileChangedAction(self):
+        self.dlg.webViewOutput.load(QUrl('file://'+self.dlg.outputfolder.filePath()))
+    
+    def outlineColAction(self):
+        self.recompileSvg()
+        self.outfileChangedAction()
+    
+    def fillColAction(self):
+        self.recompileSvg()
+        self.outfileChangedAction()
