@@ -237,6 +237,7 @@ class Inkscape2Symbol:
                 idxE = new_svg.find(" ",idxS)
                 s1 = new_svg[idxS:idxE]
                 new_svg = new_svg.replace(s1, "")
+            new_svg.replace("</g></g>","</g>")#<------------fix me!
             #create a new output svg-format file
             outfolder = self.dlg.outputfolder.filePath()
             if not outfolder.endswith(".svg"):
