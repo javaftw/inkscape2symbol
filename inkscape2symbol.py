@@ -226,6 +226,17 @@ class Inkscape2Symbol:
                         s2 = s.replace(s1,new_style_attrib.format(self.dlg.fillColour.color().name(),self.dlg.outlineColour.color().name(),"0.2"))
                         new_gcontent += s2;
             new_svg = new_svg_tag.replace("*", gcontent_arr[0] + new_gcontent+"</g>")
+            #perform final clean-up, remove references to inkscape and sodipodi
+            while "inkscape" in new_svg:
+                idxS = new_svg.find("inkscape")
+                idxE = new_svg.find(" ",idxS)
+                s1 = new_svg[idxS:idxE]
+                new_svg = new_svg.replace(s1, "")
+            while "sodipodi" in new_svg:
+                idxS = new_svg.find("sodipodi")
+                idxE = new_svg.find(" ",idxS)
+                s1 = new_svg[idxS:idxE]
+                new_svg = new_svg.replace(s1, "")
             #create a new output svg-format file
             outfolder = self.dlg.outputfolder.filePath()
             if not outfolder.endswith(".svg"):
