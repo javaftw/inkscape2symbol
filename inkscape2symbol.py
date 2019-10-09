@@ -163,6 +163,8 @@ class Inkscape2Symbol:
 
         #=============================================show the dialog
         self.dlg.show()
+        self.dlg.outputfolder.lineEdit().setValue("")
+        self.dlg.webViewOutput.setHtml("")
         # Run the dialog event loop
         result = self.dlg.exec_()
         
@@ -179,6 +181,10 @@ class Inkscape2Symbol:
             inputsvg = open(infile, 'r')
             svgcontent = inputsvg.read()
             inputsvg.close()
+            #-- is it a valid inkscape file? it's gotta be
+            if not "inkscape" in svgcontent:
+                self.dlg.webViewOriginal.setHtml("<span style='font:sans-serif;font-size:10px;'>Not a valid<br>Inkscape file</span>")
+                return
             #--cleanup
             svgcontent=svgcontent.replace("\n"," ")
             while "  " in svgcontent:
@@ -249,7 +255,19 @@ class Inkscape2Symbol:
             inputsvg.close()
     
     def infileChangedAction(self):
-        self.dlg.webViewOriginal.load(QUrl('file://'+self.dlg.inputfile.filePath()))
+        try:
+            #-- is it a valid inkscape file? it's gotta be
+            infile = self.dlg.inputfile.filePath()
+            inputsvg = open(infile, 'r')
+            svgcontent = inputsvg.read()
+            inputsvg.close()
+            if not "inkscape" in svgcontent:
+                self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>Not a valid<br>Inkscape file</span>")
+                return
+            else:
+                self.dlg.webViewOriginal.load(QUrl('file://'+self.dlg.inputfile.filePath()))
+        except:
+            return
     
     def outfileChangedAction(self):
         self.dlg.webViewOutput.load(QUrl('file://'+self.dlg.outputfolder.filePath()))
