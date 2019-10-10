@@ -4,14 +4,14 @@
  <class>Inkscape2Symbol</class>
  <widget class="QDialog" name="Inkscape2Symbol">
   <property name="windowModality">
-   <enum>Qt::NonModal</enum>
+   <enum>Qt::WindowModal</enum>
   </property>
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>352</width>
-    <height>552</height>
+    <width>320</width>
+    <height>615</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -20,10 +20,22 @@
     <verstretch>0</verstretch>
    </sizepolicy>
   </property>
+  <property name="minimumSize">
+   <size>
+    <width>320</width>
+    <height>615</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>320</width>
+    <height>615</height>
+   </size>
+  </property>
   <property name="baseSize">
    <size>
-    <width>350</width>
-    <height>355</height>
+    <width>320</width>
+    <height>615</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -33,14 +45,14 @@
    <bool>false</bool>
   </property>
   <property name="modal">
-   <bool>false</bool>
+   <bool>true</bool>
   </property>
   <widget class="QDialogButtonBox" name="button_box">
    <property name="geometry">
     <rect>
      <x>80</x>
-     <y>520</y>
-     <width>171</width>
+     <y>580</y>
+     <width>161</width>
      <height>32</height>
     </rect>
    </property>
@@ -56,7 +68,7 @@
     <rect>
      <x>10</x>
      <y>30</y>
-     <width>331</width>
+     <width>301</width>
      <height>25</height>
     </rect>
    </property>
@@ -72,7 +84,7 @@
     <rect>
      <x>10</x>
      <y>10</y>
-     <width>121</width>
+     <width>131</width>
      <height>17</height>
     </rect>
    </property>
@@ -84,21 +96,21 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>230</y>
-     <width>101</width>
+     <y>280</y>
+     <width>121</width>
      <height>17</height>
     </rect>
    </property>
    <property name="text">
-    <string>Output folder:</string>
+    <string>Output SVG file:</string>
    </property>
   </widget>
   <widget class="QgsFileWidget" name="outputfolder">
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>250</y>
-     <width>331</width>
+     <y>300</y>
+     <width>301</width>
      <height>27</height>
     </rect>
    </property>
@@ -112,8 +124,8 @@
   <widget class="QLabel" name="label_3">
    <property name="geometry">
     <rect>
-     <x>10</x>
-     <y>280</y>
+     <x>210</x>
+     <y>340</y>
      <width>31</width>
      <height>17</height>
     </rect>
@@ -125,8 +137,8 @@
   <widget class="QLabel" name="label_4">
    <property name="geometry">
     <rect>
-     <x>190</x>
-     <y>280</y>
+     <x>210</x>
+     <y>400</y>
      <width>61</width>
      <height>17</height>
     </rect>
@@ -138,9 +150,9 @@
   <widget class="QgsColorButton" name="fillColour">
    <property name="geometry">
     <rect>
-     <x>10</x>
-     <y>300</y>
-     <width>151</width>
+     <x>210</x>
+     <y>360</y>
+     <width>101</width>
      <height>28</height>
     </rect>
    </property>
@@ -148,9 +160,9 @@
   <widget class="QgsColorButton" name="outlineColour">
    <property name="geometry">
     <rect>
-     <x>190</x>
-     <y>300</y>
-     <width>151</width>
+     <x>210</x>
+     <y>420</y>
+     <width>101</width>
      <height>28</height>
     </rect>
    </property>
@@ -158,10 +170,10 @@
   <widget class="QWebView" name="webViewOriginal">
    <property name="geometry">
     <rect>
-     <x>90</x>
-     <y>60</y>
-     <width>151</width>
-     <height>161</height>
+     <x>10</x>
+     <y>70</y>
+     <width>191</width>
+     <height>201</height>
     </rect>
    </property>
    <property name="url">
@@ -173,16 +185,94 @@
   <widget class="QWebView" name="webViewOutput">
    <property name="geometry">
     <rect>
-     <x>90</x>
+     <x>10</x>
      <y>340</y>
-     <width>151</width>
-     <height>161</height>
+     <width>191</width>
+     <height>201</height>
     </rect>
    </property>
    <property name="url">
     <url>
      <string>about:blank</string>
     </url>
+   </property>
+  </widget>
+  <widget class="QLabel" name="label_5">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>70</y>
+     <width>67</width>
+     <height>17</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>File size:</string>
+   </property>
+  </widget>
+  <widget class="QLabel" name="lblFileSize">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>90</y>
+     <width>101</width>
+     <height>17</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string/>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="btnExportSVG">
+   <property name="geometry">
+    <rect>
+     <x>80</x>
+     <y>550</y>
+     <width>161</width>
+     <height>25</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Export symbol</string>
+   </property>
+  </widget>
+  <widget class="QCheckBox" name="cbNoOutline">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>450</y>
+     <width>92</width>
+     <height>23</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>No outline</string>
+   </property>
+  </widget>
+  <widget class="QLabel" name="label_6">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>500</y>
+     <width>51</width>
+     <height>17</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Status:</string>
+   </property>
+  </widget>
+  <widget class="QLabel" name="lblStatus">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>520</y>
+     <width>101</width>
+     <height>17</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>None</string>
    </property>
   </widget>
  </widget>
