@@ -177,14 +177,7 @@ class Inkscape2Symbol:
     def recompileSvg(self):
         if len(self.dlg.inputfile.filePath()) and  len(self.dlg.outputfolder.filePath()) > 0:
             #----read file and store content
-            infile = self.dlg.inputfile.filePath()
-            inputsvg = open(infile, 'r')
-            svgcontent = inputsvg.read()
-            inputsvg.close()
-            #-- is it a valid inkscape file? it's gotta be
-            if not "inkscape" in svgcontent:
-                self.dlg.webViewOriginal.setHtml("<span style='font:sans-serif;font-size:10px;'>Not a valid<br>Inkscape file</span>")
-                return
+            svgcontent = self.readSVGFile(self.dlg.inputfile.filePath())
             #--cleanup
             svgcontent=svgcontent.replace("\n"," ")
             while "  " in svgcontent:
@@ -252,24 +245,22 @@ class Inkscape2Symbol:
             #beware of permissions
             with open(outfolder, 'w') as outputsvg:
                 outputsvg.write(new_svg)
-            inputsvg.close()
     
     def infileChangedAction(self):
         try:
             #-- is it a valid inkscape file? it's gotta be
-            infile = self.dlg.inputfile.filePath()
-            inputsvg = open(infile, 'r')
-            svgcontent = inputsvg.read()
-            inputsvg.close()
-            if not "inkscape" in svgcontent:
-                self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>Not a valid<br>Inkscape file</span>")
-                return
-            else:
+            svgcontent = self.readSVGFile(self.dlg.inputfile.filePath())
+            if ("inkscape" in svgcontent) or ("xmlns:" in svgcontent):
                 self.dlg.webViewOriginal.load(QUrl('file://'+self.dlg.inputfile.filePath()))
+            else:
+                self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>Not recognized as a<br>supported SVG format</span>")
+                return
         except:
             return
     
     def outfileChangedAction(self):
+        if not self.dlg.outputfolder.lineEdit().value().endswith(".svg"):
+            self.dlg.outputfolder.lineEdit().setValue(self.dlg.outputfolder.lineEdit().value()+".svg")
         self.dlg.webViewOutput.load(QUrl('file://'+self.dlg.outputfolder.filePath()))
     
     def outlineColAction(self):
@@ -279,3 +270,9 @@ class Inkscape2Symbol:
     def fillColAction(self):
         self.recompileSvg()
         self.outfileChangedAction()
+    
+    def readSVGFile(self, filepath):
+        inputsvg = open(filepath, 'r')
+        s = inputsvg.read()
+        inputsvg.close()
+        return s
