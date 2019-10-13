@@ -30,6 +30,8 @@ from .resources import *
 # Import the code for the dialog
 from .inkscape2symbol_dialog import Inkscape2SymbolDialog
 import os.path
+from random import randint as randcol
+from time import sleep as tsleep
 
 
 class Inkscape2Symbol:
@@ -66,7 +68,7 @@ class Inkscape2Symbol:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
-        self.svgMem = None
+        self.svgMem = MemSVG()
         
         #-------------------------constants
     
@@ -154,6 +156,8 @@ class Inkscape2Symbol:
         self.dlg.outlineColour.colorChanged.connect(self.outlineColAction)
         self.dlg.btnExportSVG.clicked.connect(self.writeSVG)
         self.dlg.cbNoOutline.toggled.connect(self.setNoOutline)
+        self.dlg.btnReset.clicked.connect(self.resetAction)
+        self.dlg.btnRandomize.clicked.connect(self.randomizeAction)
         #
         self.dlg.outputfolder.setStorageMode(3)#was QgsFileWidget.SaveFile
         #--set default colours (r, g, b, a)
@@ -181,11 +185,11 @@ class Inkscape2Symbol:
     
         
     def recompileSvg(self):
-        if not self.svgMem is None:
+        if not self.svgMem.data is None:
             #----read file and store content
             #svgcontent = self.readSVGFile(self.dlg.inputfile.filePath())
             #--cleanup
-            svgcontent=self.svgMem.decode("utf-8") 
+            svgcontent=self.svgMem.text
             if "i2s=" in svgcontent:
                 #-----------------the svg has already run through the mill
                 svg_parts = svgcontent.split("<")
@@ -217,8 +221,7 @@ class Inkscape2Symbol:
                         tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
                         svgcontent=svgcontent.replace(svg_part[idxS:idxE+1],"stroke-width=\"param(outline-width) "+tempwidth+"\"")
                 print(svgcontent)
-                self.svgMem = str.encode(svgcontent)
-                self.drawMemSVG()
+                self.svgMem.setText(svgcontent)
                 self.dlg.lblStatus.setText("Modified")
                 return
             svgcontent = svgcontent.replace("\n"," ")
@@ -263,7 +266,7 @@ class Inkscape2Symbol:
                     gcontent_arr[0] = "<g {0}>".format(stemp[idxS:idxE+1])
                 for s in gcontent_arr:
                     if "style=" in s:
-                        idxS = s.find("style=\"")
+                        idxS = s.find("style=\"") 
                         idxE = s.find("\"", idxS+7)
                         s1 = s[idxS:idxE+1]
                         s2 = s.replace(s1,new_style_attrib.format(self.dlg.fillColour.color().name(),self.dlg.outlineColour.color().name(),"0.2"))
@@ -281,8 +284,7 @@ class Inkscape2Symbol:
                 s1 = new_svg[idxS:idxE]
                 new_svg = new_svg.replace(s1, "")
             new_svg.replace("</g></g>","</g>")#<------------fix me!
-            self.svgMem = str.encode(new_svg)
-            self.drawMemSVG()
+            self.svgMem.setText(new_svg)
             self.dlg.lblStatus.setText("Modified")
     
     def infileChangedAction(self):
@@ -290,18 +292,20 @@ class Inkscape2Symbol:
         try:
             if (os.path.isfile(self.dlg.inputfile.filePath())) and self.dlg.inputfile.filePath().endswith(".svg"):
                 self.dlg.lblFileSize.setText("{:.2f}kB".format(os.path.getsize(self.dlg.inputfile.filePath())/1024))
-                self.svgMem = self.readSVGFile(self.dlg.inputfile.filePath())
-                svgcontent = str(self.svgMem)
+                self.svgMem.setData(self.readSVGFile(self.dlg.inputfile.filePath()))
+                svgcontent = self.svgMem.text
                 if ("inkscape" in svgcontent) or ("xmlns:" in svgcontent):
                     self.dlg.webViewOriginal.load(QUrl('file://'+self.dlg.inputfile.filePath()))
+                    self.dlg.fillColour.setColor(QColor(self.svgMem.fill_original))
+                    self.dlg.outlineColour.setColor(QColor(self.svgMem.outline_original))
                     self.drawMemSVG()
                 else:
                     self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>Not recognized as a<br>supported SVG format</span>")
-                    self.svgMem = None
+                    self.svgMem.clear()
                     self.drawMemSVG()
             else:
                 self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>No SVG file selected</span>")
-                self.svgMem = None
+                self.svgMem.clear()
                 self.drawMemSVG()
                 self.dlg.lblFileSize.setText("")
                 pass 
@@ -335,21 +339,86 @@ class Inkscape2Symbol:
             #write the output file
             #beware of permissions
             with open(outfolder, 'w') as outputsvg:
-                outputsvg.write(self.svgMem.decode("utf-8"))
+                outputsvg.write(self.svgMem.text)
             self.dlg.lblStatus.setText("Saved")
         else:
             self.dlg.lblStatus.setText("Not saved")
             return
 
     def drawMemSVG(self):
-        if not self.svgMem is None:
-            self.dlg.webViewOutput.setContent(self.svgMem,"image/svg+xml")
+        if not self.svgMem.data is None:
+            self.dlg.webViewOutput.setContent(self.svgMem.data,"image/svg+xml")
             self.dlg.lblStatus.setText("Modified")
         else:
             self.dlg.webViewOutput.setHtml("")
     
     def setNoOutline(self):
-        if not self.svgMem is None:
+        if not self.svgMem.data is None:
             self.recompileSvg()
             self.drawMemSVG()
+            
+    def resetAction(self):
+        if not self.svgMem.data is None:
+            self.dlg.fillColour.setColor(QColor(self.svgMem.fill_original))
+            self.dlg.outlineColour.setColor(QColor(self.svgMem.outline_original))
+            self.recompileSvg()
+            self.drawMemSVG()
+            
+    def randomizeAction(self):
+        self.dlg.fillColour.setColor(QColor("#"+hex(randcol(0x1,0xffffff))[2:].zfill(6)))
+        self.dlg.outlineColour.setColor(QColor("#"+hex(randcol(0x1,0xffffff))[2:].zfill(6)))
+        if not self.svgMem.data is None:
+            self.recompileSvg()
+            self.drawMemSVG()
+            
+            
+class MemSVG:
+    
+    def __init__(self):
+        pass
+    
+    width = ""
+    height = ""
+    fill_original = ""
+    fill = ""
+    outline_original = ""
+    outline = ""
+    text = ""
+    data = None
+            
+    def setData(self, d):
+        self.data = d
+        self.text = d.decode("utf-8")
+        self.parse()
+    
+    def setText(self, t):
+        self.text = t
+        self.data = str.encode(t)
+        self.parse()
+    
+    def clear(self):
+        self.width = ""
+        self.height = ""
+        self.fill_original = ""
+        self.fill = ""
+        self.outline_original = ""
+        self.outline = ""
+        self.text = ""
+        self.data = None
+        
+    def parse(self):
+        if "fill:" in self.text:
+            idxS = self.text.find("fill:")
+            idxE = self.text.find(";",idxS)
+            s = self.text[idxS+5:idxE]
+            self.fill = s
+            if self.fill_original is "":
+                self.fill_original = self.fill
+        if "stroke:" in self.text:
+            idxS = self.text.find("stroke:")
+            idxE = self.text.find(";",idxS)
+            s = self.text[idxS+7:idxE]
+            self.outline = s
+            if self.outline_original is "":
+                self.outline_original = self.outline
             

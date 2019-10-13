@@ -41,6 +41,10 @@
   <property name="windowTitle">
    <string>Inkscape2Symbol</string>
   </property>
+  <property name="windowIcon">
+   <iconset>
+    <normaloff>icon.png</normaloff>icon.png</iconset>
+  </property>
   <property name="sizeGripEnabled">
    <bool>false</bool>
   </property>
@@ -50,7 +54,7 @@
   <widget class="QDialogButtonBox" name="button_box">
    <property name="geometry">
     <rect>
-     <x>80</x>
+     <x>150</x>
      <y>580</y>
      <width>161</width>
      <height>32</height>
@@ -138,7 +142,7 @@
    <property name="geometry">
     <rect>
      <x>210</x>
-     <y>400</y>
+     <y>390</y>
      <width>61</width>
      <height>17</height>
     </rect>
@@ -161,7 +165,7 @@
    <property name="geometry">
     <rect>
      <x>210</x>
-     <y>420</y>
+     <y>410</y>
      <width>101</width>
      <height>28</height>
     </rect>
@@ -226,7 +230,7 @@
   <widget class="QPushButton" name="btnExportSVG">
    <property name="geometry">
     <rect>
-     <x>80</x>
+     <x>150</x>
      <y>550</y>
      <width>161</width>
      <height>25</height>
@@ -240,7 +244,7 @@
    <property name="geometry">
     <rect>
      <x>210</x>
-     <y>450</y>
+     <y>440</y>
      <width>92</width>
      <height>23</height>
     </rect>
@@ -252,8 +256,8 @@
   <widget class="QLabel" name="label_6">
    <property name="geometry">
     <rect>
-     <x>210</x>
-     <y>500</y>
+     <x>10</x>
+     <y>550</y>
      <width>51</width>
      <height>17</height>
     </rect>
@@ -265,14 +269,40 @@
   <widget class="QLabel" name="lblStatus">
    <property name="geometry">
     <rect>
-     <x>210</x>
-     <y>520</y>
-     <width>101</width>
+     <x>10</x>
+     <y>570</y>
+     <width>131</width>
      <height>17</height>
     </rect>
    </property>
    <property name="text">
     <string>None</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="btnReset">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>500</y>
+     <width>101</width>
+     <height>25</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Reset</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="btnRandomize">
+   <property name="geometry">
+    <rect>
+     <x>210</x>
+     <y>470</y>
+     <width>101</width>
+     <height>25</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Randomize</string>
    </property>
   </widget>
  </widget>
