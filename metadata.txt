@@ -10,7 +10,7 @@ version=0.2
 author=Hennie Kotze
 email=henniek@locat.co.za
 
-about=Automating a simple yet tedious and crucial procedure to convert a SVG made in Inkscape into a format compatible witht the QGIS symbol standard
+about=Automating a simple yet tedious and crucial procedure to convert a SVG made in Inkscape into a format compatible with the QGIS symbol standard
 
 tracker=https://github.com/javaftw/inkscape2symbol/issues
 repository=https://github.com/javaftw/inkscape2symbol
