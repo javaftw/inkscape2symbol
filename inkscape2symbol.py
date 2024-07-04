@@ -9,7 +9,7 @@
         begin                : 2019-09-30
         git sha              : $Format:%H$
         copyright            : (C) 2019 by Hennie Kotze
-        email                : henniek@locat.co.za
+        email                : javaftw@gmail.com
  ***************************************************************************/
 
 /***************************************************************************
@@ -21,6 +21,8 @@
  *                                                                         *
  ***************************************************************************/
 """
+import os.path
+from random import randint
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QUrl
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction
@@ -29,10 +31,6 @@ from qgis.PyQt.QtWidgets import QAction
 from .resources import *
 # Import the code for the dialog
 from .inkscape2symbol_dialog import Inkscape2SymbolDialog
-import os.path
-from random import randint as randcol
-from time import sleep as tsleep
-
 
 class Inkscape2Symbol:
     """QGIS Plugin Implementation."""
@@ -45,11 +43,14 @@ class Inkscape2Symbol:
             application at run time.
         :type iface: QgsInterface
         """
-        # Save reference to the QGIS interface
         self.iface = iface
-        # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
-        # initialize locale
+        self.actions = []
+        self.menu = self.tr(u'&Inkscape2Symbol')
+        self.first_start = None
+        self.svgMem = MemSVG()
+        
+        # Initialize locale
         locale = QSettings().value('locale/userLocale')[0:2]
         locale_path = os.path.join(
             self.plugin_dir,
@@ -61,36 +62,14 @@ class Inkscape2Symbol:
             self.translator.load(locale_path)
             QCoreApplication.installTranslator(self.translator)
 
-        # Declare instance attributes
-        self.actions = []
-        self.menu = self.tr(u'&Inkscape2Symbol')
-
-        # Check if plugin was started the first time in current QGIS session
-        # Must be set in initGui() to survive plugin reloads
-        self.first_start = None
-        self.svgMem = MemSVG()
-        
-        #-------------------------constants
-    
-
-    # noinspection PyMethodMayBeStatic
     def tr(self, message):
-        # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
+        """Get the translation for a string using Qt translation API."""
         return QCoreApplication.translate('Inkscape2Symbol', message)
 
-
-    def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None):
-
+    def add_action(self, icon_path, text, callback, enabled_flag=True,
+                   add_to_menu=True, add_to_toolbar=True, status_tip=None,
+                   whats_this=None, parent=None):
+        """Add a toolbar icon to the toolbar."""
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
         action.triggered.connect(callback)
@@ -103,21 +82,16 @@ class Inkscape2Symbol:
             action.setWhatsThis(whats_this)
 
         if add_to_toolbar:
-            # Adds plugin icon to Plugins toolbar
             self.iface.addToolBarIcon(action)
 
         if add_to_menu:
-            self.iface.addPluginToMenu(
-                self.menu,
-                action)
+            self.iface.addPluginToMenu(self.menu, action)
 
         self.actions.append(action)
-
         return action
 
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
-
         icon_path = ':/plugins/inkscape2symbol/icon.png'
         self.add_action(
             icon_path,
@@ -125,32 +99,22 @@ class Inkscape2Symbol:
             callback=self.run,
             parent=self.iface.mainWindow())
 
-        # will be set False in run()
         self.first_start = True
-        self.outputFileSaved = False
-
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
-            self.iface.removePluginMenu(
-                self.tr(u'&Inkscape2Symbol'),
-                action)
+            self.iface.removePluginMenu(self.tr(u'&Inkscape2Symbol'), action)
             self.iface.removeToolBarIcon(action)
-
 
     def run(self):
         """Run method that performs all the real work"""
-
-        # Create the dialog with elements (after translation) and keep reference
-        # Only create GUI ONCE in callback, so that it will only load when the plugin is started
-        if self.first_start == True:
+        if self.first_start:
             self.first_start = False
             self.dlg = Inkscape2SymbolDialog()
 
-        
+        # Connect signals
         self.dlg.inputfile.fileChanged.connect(self.infileChangedAction)
-        self.dlg.inputfile.setFilter("*.svg")#only display files with the .svg extension
         self.dlg.outputfolder.fileChanged.connect(self.outfileChangedAction)
         self.dlg.fillColour.colorChanged.connect(self.fillColAction)
         self.dlg.outlineColour.colorChanged.connect(self.outlineColAction)
@@ -158,144 +122,171 @@ class Inkscape2Symbol:
         self.dlg.cbNoOutline.toggled.connect(self.setNoOutline)
         self.dlg.btnReset.clicked.connect(self.resetAction)
         self.dlg.btnRandomize.clicked.connect(self.randomizeAction)
-        #
-        self.dlg.outputfolder.setStorageMode(3)#was QgsFileWidget.SaveFile
-        #--set default colours (r, g, b, a)
+
+        # Set up UI
+        self.dlg.inputfile.setFilter("*.svg")
+        self.dlg.outputfolder.setStorageMode(3)
         self.dlg.fillColour.setColor(QColor(220, 220, 220, 255))
         self.dlg.outlineColour.setColor(QColor(0, 0, 0, 255))
-        
-        #-- graphicsView SVG display
-        
-        #--svg in child widget
-        self.inputFileSize = 0
-        self.inputFileObjectCount = 0
 
-        #=============================================show the dialog
+        # Show the dialog
         self.dlg.show()
         self.dlg.outputfolder.lineEdit().setValue("")
         self.dlg.webViewOutput.setHtml("")
         self.dlg.lblFileSize.setText("")
+
         # Run the dialog event loop
         result = self.dlg.exec_()
         
         # See if OK was pressed
         if result:
-            #open the Inkscape-generated svg...
             self.recompileSvg()
-    
-        
+
     def recompileSvg(self):
-        if not self.svgMem.data is None:
-            #----read file and store content
-            #svgcontent = self.readSVGFile(self.dlg.inputfile.filePath())
-            #--cleanup
-            svgcontent=self.svgMem.text
-            if "i2s=" in svgcontent:
-                #-----------------the svg has already run through the mill
-                svg_parts = svgcontent.split("<")
-                for svg_part in svg_parts:
-                    if "fill:" in svg_part:
-                        idxS = svg_part.find("fill:")
-                        idxE = svg_part.find(";", idxS)
-                        svgcontent=svgcontent.replace(svg_part[idxS:idxE],"fill:"+self.dlg.fillColour.color().name())
-                    if "stroke:" in svg_part:
-                        idxS = svg_part.find("stroke:")
-                        idxE = svg_part.find(";", idxS)
-                        svgcontent=svgcontent.replace(svg_part[idxS:idxE],"stroke:"+self.dlg.outlineColour.color().name())
-                    if "stroke-width:" in svg_part:
-                        idxS = svg_part.find("stroke-width:")
-                        idxE = svg_part.find(";", idxS)
-                        tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
-                        svgcontent=svgcontent.replace(svg_part[idxS:idxE],"stroke-width:"+tempwidth)
-                    if "fill=" in svg_part:
-                        idxS = svg_part.find("fill=")
-                        idxE = svg_part.find("\"", idxS+6)
-                        svgcontent=svgcontent.replace(svg_part[idxS:idxE+1],"fill=\"param(fill) "+self.dlg.fillColour.color().name()+"\"")
-                    if "stroke=" in svg_part:
-                        idxS = svg_part.find("stroke=")
-                        idxE = svg_part.find("\"", idxS+8)
-                        svgcontent=svgcontent.replace(svg_part[idxS:idxE+1],"stroke=\"param(outline) "+self.dlg.outlineColour.color().name()+"\"")
-                    if "stroke-width=" in svg_part:
-                        idxS = svg_part.find("stroke-width=")
-                        idxE = svg_part.find("\"", idxS+14)
-                        tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
-                        svgcontent=svgcontent.replace(svg_part[idxS:idxE+1],"stroke-width=\"param(outline-width) "+tempwidth+"\"")
-                print(svgcontent)
-                self.svgMem.setText(svgcontent)
-                self.dlg.lblStatus.setText("Modified")
-                return
-            svgcontent = svgcontent.replace("\n"," ")
-            while "  " in svgcontent:
-                svgcontent=svgcontent.replace("  "," ")
-            #print(svgcontent)
-            #--extract width, height and viewBox from the <svg> tag
-            new_svg_tag = '<svg i2s="yes" enable-background="new {2}" width="{0}" height="{1}" viewBox="{2}" xmlns="http://www.w3.org/2000/svg">*</svg>'
-            new_style_attrib = 'style="opacity:1;fill:{0};fill-opacity:1;stroke:{1};stroke-width:{2};stroke-opacity:1" fill="param(fill) {0}" stroke="param(outline) {1}" stroke-width="param(outline-width) {2}"'
-            if "<svg " in svgcontent:
-                idxS = svgcontent.find("<svg ")
-                idxE = svgcontent.find(">", idxS)
-                svgtag = svgcontent[idxS:idxE]
-                svg_attrib_vals = []
-                svg_attribs = ["width=", "height=", "viewBox="]
-                i=0
-                while i < len(svg_attribs):
-                    if svg_attribs[i] in svgtag:
-                        idxS = svgtag.find(svg_attribs[i])
-                        idxE = svgtag.find("\"", idxS+len(svg_attribs[i])+1)
-                        svg_attrib_vals.append(svgtag[idxS+len(svg_attribs[i])+1:idxE])
-                    i += 1
-                new_svg_tag = new_svg_tag.format(svg_attrib_vals[0],svg_attrib_vals[1],svg_attrib_vals[2])
-            #--grab the <g> tag
-            gcontent = ""
-            new_gcontent = ""
-            gcontent_arr = []
-            if "<g " in svgcontent:
-                indexStart = svgcontent.find("<g ")
-                indexEnd = svgcontent.find("</g>", indexStart)
-                gcontent = svgcontent[indexStart:indexEnd+4]
-                gcontent = gcontent.replace("><",">\n<")
-                gcontent = gcontent.replace("> <",">\n<")
-                #--break the <g> tag up into constituents
-                #print(gcontent)
-                gcontent_arr = gcontent.split("\n")
-            if len(gcontent_arr) > 1:
-                if "transform" in gcontent_arr[0]:
-                    stemp = gcontent_arr[0]
-                    idxS = stemp.find("transform")
-                    idxE = stemp.find("\"", idxS+11)
-                    gcontent_arr[0] = "<g {0}>".format(stemp[idxS:idxE+1])
-                for s in gcontent_arr:
-                    if "style=" in s:
-                        idxS = s.find("style=\"") 
-                        idxE = s.find("\"", idxS+7)
-                        s1 = s[idxS:idxE+1]
-                        s2 = s.replace(s1,new_style_attrib.format(self.dlg.fillColour.color().name(),self.dlg.outlineColour.color().name(),"0.2"))
-                        new_gcontent += s2;
-            new_svg = new_svg_tag.replace("*", gcontent_arr[0] + new_gcontent+"</g>")
-            #perform final clean-up, remove references to inkscape and sodipodi
-            while "inkscape" in new_svg:
-                idxS = new_svg.find("inkscape")
-                idxE = new_svg.find(" ",idxS)
-                s1 = new_svg[idxS:idxE]
-                new_svg = new_svg.replace(s1, "")
-            while "sodipodi" in new_svg:
-                idxS = new_svg.find("sodipodi")
-                idxE = new_svg.find(" ",idxS)
-                s1 = new_svg[idxS:idxE]
-                new_svg = new_svg.replace(s1, "")
-            new_svg.replace("</g></g>","</g>")#<------------fix me!
-            self.svgMem.setText(new_svg)
-            self.dlg.lblStatus.setText("Modified")
-    
+        """Recompile the SVG with new colors and settings"""
+        if self.svgMem.data is None:
+            return
+
+        svgcontent = self.svgMem.text
+        
+        # Check if SVG has already been processed
+        if "i2s=" in svgcontent:
+            self.updateExistingSvg(svgcontent)
+        else:
+            self.createNewSvg(svgcontent)
+
+    def updateExistingSvg(self, svgcontent):
+        """Update an existing processed SVG"""
+        svg_parts = svgcontent.split("<")
+        for svg_part in svg_parts:
+            if "fill:" in svg_part:
+                svgcontent = self.replaceAttribute(svgcontent, svg_part, "fill:", self.dlg.fillColour.color().name())
+            if "stroke:" in svg_part:
+                svgcontent = self.replaceAttribute(svgcontent, svg_part, "stroke:", self.dlg.outlineColour.color().name())
+            if "stroke-width:" in svg_part:
+                tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
+                svgcontent = self.replaceAttribute(svgcontent, svg_part, "stroke-width:", tempwidth)
+            if "fill=" in svg_part:
+                svgcontent = self.replaceParameter(svgcontent, svg_part, "fill=", self.dlg.fillColour.color().name())
+            if "stroke=" in svg_part:
+                svgcontent = self.replaceParameter(svgcontent, svg_part, "stroke=", self.dlg.outlineColour.color().name())
+            if "stroke-width=" in svg_part:
+                tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
+                svgcontent = self.replaceParameter(svgcontent, svg_part, "stroke-width=", tempwidth)
+        
+        self.svgMem.setText(svgcontent)
+        self.dlg.lblStatus.setText("Modified")
+
+    def replaceAttribute(self, content, part, attr, value):
+        """Replace an attribute in the SVG content"""
+        idxS = part.find(attr)
+        idxE = part.find(";", idxS)
+        return content.replace(part[idxS:idxE], f"{attr}{value}")
+
+    def replaceParameter(self, content, part, param, value):
+        """Replace a parameter in the SVG content"""
+        idxS = part.find(param)
+        idxE = part.find("\"", idxS + len(param) + 1)
+        return content.replace(part[idxS:idxE+1], f'{param}"param({param.rstrip("=")}) {value}"')
+
+    def createNewSvg(self, svgcontent):
+        """Create a new processed SVG"""
+        svgcontent = self.cleanupSvgContent(svgcontent)
+        
+        new_svg_tag, svg_attrib_vals = self.extractSvgAttributes(svgcontent)
+        gcontent_arr = self.extractGContent(svgcontent)
+        
+        new_gcontent = self.createNewGContent(gcontent_arr)
+        new_svg = new_svg_tag.replace("*", gcontent_arr[0] + new_gcontent + "</g>")
+        
+        new_svg = self.removeNamespaces(new_svg)
+        self.svgMem.setText(new_svg)
+        self.dlg.lblStatus.setText("Modified")
+
+    def cleanupSvgContent(self, content):
+        """Clean up SVG content by removing unnecessary whitespace"""
+        content = content.replace("\n", " ")
+        while "  " in content:
+            content = content.replace("  ", " ")
+        return content
+
+    def extractSvgAttributes(self, content):
+        """Extract SVG attributes from the content"""
+        new_svg_tag = '<svg i2s="yes" enable-background="new {2}" width="{0}" height="{1}" viewBox="{2}" xmlns="http://www.w3.org/2000/svg">*</svg>'
+        svg_attrib_vals = []
+        
+        if "<svg " in content:
+            idxS = content.find("<svg ")
+            idxE = content.find(">", idxS)
+            svgtag = content[idxS:idxE]
+            
+            for attr in ["width=", "height=", "viewBox="]:
+                if attr in svgtag:
+                    idxS = svgtag.find(attr)
+                    idxE = svgtag.find("\"", idxS + len(attr) + 1)
+                    svg_attrib_vals.append(svgtag[idxS + len(attr) + 1:idxE])
+            
+            new_svg_tag = new_svg_tag.format(*svg_attrib_vals)
+        
+        return new_svg_tag, svg_attrib_vals
+
+    def extractGContent(self, content):
+        """Extract g content from SVG"""
+        gcontent_arr = []
+        if "<g " in content:
+            indexStart = content.find("<g ")
+            indexEnd = content.find("</g>", indexStart)
+            gcontent = content[indexStart:indexEnd + 4]
+            gcontent = gcontent.replace("><", ">\n<")
+            gcontent = gcontent.replace("> <", ">\n<")
+            gcontent_arr = gcontent.split("\n")
+        return gcontent_arr
+
+    def createNewGContent(self, gcontent_arr):
+        """Create new g content with updated styles"""
+        new_style_attrib = 'style="opacity:1;fill:{0};fill-opacity:1;stroke:{1};stroke-width:{2};stroke-opacity:1" fill="param(fill) {0}" stroke="param(outline) {1}" stroke-width="param(outline-width) {2}"'
+        new_gcontent = ""
+        
+        if len(gcontent_arr) > 1:
+            if "transform" in gcontent_arr[0]:
+                stemp = gcontent_arr[0]
+                idxS = stemp.find("transform")
+                idxE = stemp.find("\"", idxS + 11)
+                gcontent_arr[0] = "<g {0}>".format(stemp[idxS:idxE + 1])
+            
+            for s in gcontent_arr[1:]:
+                if "style=" in s:
+                    idxS = s.find("style=\"")
+                    idxE = s.find("\"", idxS + 7)
+                    s1 = s[idxS:idxE + 1]
+                    s2 = s.replace(s1, new_style_attrib.format(
+                        self.dlg.fillColour.color().name(),
+                        self.dlg.outlineColour.color().name(),
+                        "0.2"
+                    ))
+                    new_gcontent += s2
+        
+        return new_gcontent
+
+    def removeNamespaces(self, svg):
+        """Remove Inkscape and Sodipodi namespaces from SVG"""
+        for ns in ["inkscape", "sodipodi"]:
+            while ns in svg:
+                idxS = svg.find(ns)
+                idxE = svg.find(" ", idxS)
+                s1 = svg[idxS:idxE]
+                svg = svg.replace(s1, "")
+        return svg.replace("</g></g>", "</g>")
+
     def infileChangedAction(self):
-        #self.dlg.lblFileSize.setText("0:.2g".format(os.path.getsize(self.dlg.inputfile.filePath())))
+        """Handle input file change"""
         try:
-            if (os.path.isfile(self.dlg.inputfile.filePath())) and self.dlg.inputfile.filePath().endswith(".svg"):
-                self.dlg.lblFileSize.setText("{:.2f}kB".format(os.path.getsize(self.dlg.inputfile.filePath())/1024))
+            if os.path.isfile(self.dlg.inputfile.filePath()) and self.dlg.inputfile.filePath().endswith(".svg"):
+                self.dlg.lblFileSize.setText("{:.2f}kB".format(os.path.getsize(self.dlg.inputfile.filePath()) / 1024))
                 self.svgMem.setData(self.readSVGFile(self.dlg.inputfile.filePath()))
                 svgcontent = self.svgMem.text
                 if ("inkscape" in svgcontent) or ("xmlns:" in svgcontent):
-                    self.dlg.webViewOriginal.load(QUrl('file://'+self.dlg.inputfile.filePath()))
+                    self.dlg.webViewOriginal.load(QUrl('file://' + self.dlg.inputfile.filePath()))
                     self.dlg.fillColour.setColor(QColor(self.svgMem.fill_original))
                     self.dlg.outlineColour.setColor(QColor(self.svgMem.outline_original))
                     self.drawMemSVG()
@@ -308,95 +299,84 @@ class Inkscape2Symbol:
                 self.svgMem.clear()
                 self.drawMemSVG()
                 self.dlg.lblFileSize.setText("")
-                pass 
         except Exception as ex:
             print(ex)
-            return
-    
+
     def outfileChangedAction(self):
+        """Handle output file change"""
         self.drawMemSVG()
-    
+
     def outlineColAction(self):
+        """Handle outline color change"""
         self.recompileSvg()
         self.outfileChangedAction()
-    
+
     def fillColAction(self):
+        """Handle fill color change"""
         self.recompileSvg()
         self.outfileChangedAction()
-    
+
     def readSVGFile(self, filepath):
-        inputsvg = open(filepath, 'rb')
-        s = inputsvg.read()
-        inputsvg.close()
-        return s
-    
-    def writeSVG(self, filepath):
+        """Read SVG file content"""
+        with open(filepath, 'rb') as inputsvg:
+            return inputsvg.read()
+
+    def writeSVG(self):
+        """Write SVG file"""
         if len(self.dlg.outputfolder.filePath()) > 0:
-            #create a new output svg-format file
             outfolder = self.dlg.outputfolder.filePath()
             if not outfolder.endswith(".svg"):
                 outfolder += ".svg"
-            #write the output file
-            #beware of permissions
-            with open(outfolder, 'w') as outputsvg:
-                outputsvg.write(self.svgMem.text)
-            self.dlg.lblStatus.setText("Saved")
+            try:
+                with open(outfolder, 'w') as outputsvg:
+                    outputsvg.write(self.svgMem.text)
+                self.dlg.lblStatus.setText("Saved")
+            except PermissionError:
+                self.dlg.lblStatus.setText("Permission denied")
+            except Exception as e:
+                self.dlg.lblStatus.setText(f"Error: {str(e)}")
         else:
             self.dlg.lblStatus.setText("Not saved")
-            return
 
     def drawMemSVG(self):
-        if not self.svgMem.data is None:
-            self.dlg.webViewOutput.setContent(self.svgMem.data,"image/svg+xml")
+        """Draw SVG in memory"""
+        if self.svgMem.data is not None:
+            self.dlg.webViewOutput.setContent(self.svgMem.data, "image/svg+xml")
             self.dlg.lblStatus.setText("Modified")
         else:
             self.dlg.webViewOutput.setHtml("")
-    
+
     def setNoOutline(self):
-        if not self.svgMem.data is None:
+        """Set no outline for SVG"""
+        if self.svgMem.data is not None:
             self.recompileSvg()
             self.drawMemSVG()
-            
+
     def resetAction(self):
-        if not self.svgMem.data is None:
+        """Reset SVG to original colors"""
+        if self.svgMem.data is not None:
             self.dlg.fillColour.setColor(QColor(self.svgMem.fill_original))
             self.dlg.outlineColour.setColor(QColor(self.svgMem.outline_original))
             self.recompileSvg()
             self.drawMemSVG()
-            
+
     def randomizeAction(self):
-        self.dlg.fillColour.setColor(QColor("#"+hex(randcol(0x1,0xffffff))[2:].zfill(6)))
-        self.dlg.outlineColour.setColor(QColor("#"+hex(randcol(0x1,0xffffff))[2:].zfill(6)))
-        if not self.svgMem.data is None:
+        """Randomize SVG colors"""
+        self.dlg.fillColour.setColor(QColor(self.randomColor()))
+        self.dlg.outlineColour.setColor(QColor(self.randomColor()))
+        if self.svgMem.data is not None:
             self.recompileSvg()
             self.drawMemSVG()
-            
-            
+
+    @staticmethod
+    def randomColor():
+        """Generate a random color"""
+        return "#" + ''.join([hex(randint(0, 255))[2:].zfill(2) for _ in range(3)])
+
 class MemSVG:
-    
+    """Class to handle SVG in memory"""
+
     def __init__(self):
-        pass
-    
-    width = ""
-    height = ""
-    fill_original = ""
-    fill = ""
-    outline_original = ""
-    outline = ""
-    text = ""
-    data = None
-            
-    def setData(self, d):
-        self.data = d
-        self.text = d.decode("utf-8")
-        self.parse()
-    
-    def setText(self, t):
-        self.text = t
-        self.data = str.encode(t)
-        self.parse()
-    
-    def clear(self):
         self.width = ""
         self.height = ""
         self.fill_original = ""
@@ -405,20 +385,49 @@ class MemSVG:
         self.outline = ""
         self.text = ""
         self.data = None
-        
+
+    def setData(self, d):
+        """Set SVG data"""
+        self.data = d
+        self.text = d.decode("utf-8")
+        self.parse()
+
+    def setText(self, t):
+        """Set SVG text"""
+        self.text = t
+        self.data = str.encode(t)
+        self.parse()
+
+    def clear(self):
+        """Clear all SVG data"""
+        self.width = ""
+        self.height = ""
+        self.fill_original = ""
+        self.fill = ""
+        self.outline_original = ""
+        self.outline = ""
+        self.text = ""
+        self.data = None
+
     def parse(self):
+        """Parse SVG content"""
+        self.parseFill()
+        self.parseOutline()
+
+    def parseFill(self):
+        """Parse fill color from SVG"""
         if "fill:" in self.text:
             idxS = self.text.find("fill:")
-            idxE = self.text.find(";",idxS)
-            s = self.text[idxS+5:idxE]
-            self.fill = s
-            if self.fill_original is "":
+            idxE = self.text.find(";", idxS)
+            self.fill = self.text[idxS + 5:idxE]
+            if not self.fill_original:
                 self.fill_original = self.fill
+
+    def parseOutline(self):
+        """Parse outline color from SVG"""
         if "stroke:" in self.text:
             idxS = self.text.find("stroke:")
-            idxE = self.text.find(";",idxS)
-            s = self.text[idxS+7:idxE]
-            self.outline = s
-            if self.outline_original is "":
+            idxE = self.text.find(";", idxS)
+            self.outline = self.text[idxS + 7:idxE]
+            if not self.outline_original:
                 self.outline_original = self.outline
-            
