@@ -6,9 +6,9 @@
 name=Inkscape2Symbol
 qgisMinimumVersion=3.0
 description=Import SVG drawings created in Inkscape as symbols in QGIS
-version=0.2
+version=0.3
 author=Hennie Kotze
-email=henniek@locat.co.za
+email=javaftw@gmail.com
 
 about=Automating a simple yet tedious and crucial procedure to convert a SVG made in Inkscape into a format compatible with the QGIS symbol standard
 
