@@ -173,7 +173,7 @@ class SVGProcessor:
             SymbolStyle with original colors
         """
         # Import here to avoid circular import
-        from .inkscape2symbol_improved import SymbolStyle
+        from .inkscape2symbol import SymbolStyle
 
         # Default colors
         fill_color = QColor('#DCDCDC')
@@ -450,4 +450,4 @@ class SVGProcessor:
 
 
 # Import SymbolStyle from main module
-from .inkscape2symbol_improved import SymbolStyle
+from .inkscape2symbol import SymbolStyle
