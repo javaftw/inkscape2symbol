@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 """
 /***************************************************************************
  Inkscape2SymbolDialog
@@ -21,14 +23,13 @@
  *                                                                         *
  ***************************************************************************/
 """
-# -*- coding: utf-8 -*-
+
 """
 Modern Dialog for Inkscape2Symbol
 
 Replaces deprecated QWebView with QSvgWidget and implements signal-based architecture.
 """
 
-from __future__ import annotations
 
 import logging
 import random

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 """
 SVG Processing Module for Inkscape2Symbol
 
 Handles SVG file parsing, validation, and conversion to QGIS-compatible format.
 Uses proper XML parsing instead of string manipulation.
 """
-
-from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET

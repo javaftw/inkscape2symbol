@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 """
 /***************************************************************************
  Inkscape2Symbol
@@ -21,7 +23,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-# -*- coding: utf-8 -*-
+
 """
 Inkscape2Symbol - Modern QGIS Plugin
 Convert Inkscape SVG drawings into QGIS-compatible symbols
@@ -30,7 +32,6 @@ Author: Hennie Kotze (modernized)
 License: GPL v2+
 """
 
-from __future__ import annotations
 
 import logging
 import os
