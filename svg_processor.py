@@ -138,22 +138,45 @@ class SVGProcessor:
 
         shape_tags = ['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line']
 
+        # Try to find any shape element, handling namespaces
         for elem in self._root.iter():
-            tag_name = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+            # Handle both namespaced (e.g. {http://...}path or svg:path) and non-namespaced tags
+            tag_name = elem.tag
+            if '}' in tag_name:
+                # Namespaced like {http://www.w3.org/2000/svg}path
+                tag_name = tag_name.split('}')[-1]
+            elif ':' in tag_name:
+                # Prefix notation like svg:path
+                tag_name = tag_name.split(':')[-1]
+
+            logger.debug(f"Checking element: {elem.tag} -> normalized: {tag_name}")
 
             if tag_name not in shape_tags:
                 continue
 
-            # Check style attribute
+            logger.debug(f"  Found shape: {tag_name}")
+            logger.debug(f"  Attributes: {dict(elem.attrib)}")
+
+            # Check style attribute first
             style = elem.get('style', '')
             if style:
+                logger.debug(f"  style attribute: {style}")
                 fill = self._extract_color_from_style(style, 'fill')
                 stroke = self._extract_color_from_style(style, 'stroke')
 
+                logger.debug(f"  extracted from style - fill: {fill}, stroke: {stroke}")
+
                 if fill and fill != 'none':
-                    fill_color = QColor(fill)
+                    color = self._extract_color_from_param(fill)
+                    logger.debug(f"  parsed fill color: {color}")
+                    if color:
+                        fill_color = QColor(color)
+
                 if stroke and stroke != 'none':
-                    outline_color = QColor(stroke)
+                    color = self._extract_color_from_param(stroke)
+                    logger.debug(f"  parsed stroke color: {color}")
+                    if color:
+                        outline_color = QColor(color)
 
                 if fill or stroke:
                     break
@@ -162,14 +185,29 @@ class SVGProcessor:
             fill_attr = elem.get('fill')
             stroke_attr = elem.get('stroke')
 
+            # Use print to bypass logger issues
+            print(f"[DEBUG] fill attribute RAW: '{fill_attr}'")
+            print(f"[DEBUG] stroke attribute RAW: '{stroke_attr}'")
+
             if fill_attr and fill_attr != 'none':
-                fill_color = QColor(fill_attr)
+                color = self._extract_color_from_param(fill_attr)
+                print(f"[DEBUG] parsed fill from attribute: '{color}'")
+                if color:
+                    fill_color = QColor(color)
+                    print(f"[DEBUG] QColor fill: {fill_color.name()}")
 
             if stroke_attr and stroke_attr != 'none':
-                outline_color = QColor(stroke_attr)
+                color = self._extract_color_from_param(stroke_attr)
+                print(f"[DEBUG] parsed stroke from attribute: '{color}'")
+                if color:
+                    outline_color = QColor(color)
+                    print(f"[DEBUG] QColor stroke: {outline_color.name()}")
 
             if fill_attr or stroke_attr:
+                print(f"[DEBUG] Found colors - breaking. Fill: {fill_color.name()}, Stroke: {outline_color.name()}")
                 break
+
+        logger.info(f"Final extracted colors - fill: {fill_color.name()}, outline: {outline_color.name()}")
 
         return SymbolStyle(
             fill_color=fill_color,
@@ -198,6 +236,32 @@ class SVGProcessor:
 
         return None
 
+    @staticmethod
+    def _extract_color_from_param(value: str) -> Optional[str]:
+        """
+        Extract color from either regular format or param() format.
+
+        Examples:
+            "#fff176" -> "#fff176"
+            "param(fill) #fff176" -> "#fff176"
+            "param(outline) rgb(255,127,0)" -> "rgb(255,127,0)"
+        """
+        if not value or value == 'none':
+            return None
+
+        # If it starts with param(), extract the default color after it
+        if value.startswith('param('):
+            # Format: "param(name) #color" or "param(name) rgb(...)"
+            parts = value.split(')', 1)
+            if len(parts) == 2:
+                color = parts[1].strip()
+                if color and color != 'none':
+                    return color
+            return None
+
+        # Regular color value
+        return value
+
     def process(self, style: SymbolStyle) -> str:
         """
         Process the SVG with the given style parameters.
@@ -208,7 +272,7 @@ class SVGProcessor:
 
         Returns the EXPORT version (with param() syntax).
         """
-        if not self._root:
+        if self._root is None:
             raise SVGProcessingError("No SVG loaded")
 
         logger.info(f"Processing SVG with style: {style.to_dict()}")

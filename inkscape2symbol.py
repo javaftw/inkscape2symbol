@@ -32,7 +32,6 @@ Author: Hennie Kotze (modernized)
 License: GPL v2+
 """
 
-
 import logging
 import os
 from pathlib import Path
@@ -49,7 +48,6 @@ from qgis.core import QgsApplication
 from .inkscape2symbol_dialog import Inkscape2SymbolDialog
 from .svg_processor import SVGProcessor, SVGProcessingError
 from .config_manager import ConfigManager
-from .symbol_style import SymbolStyle
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -413,11 +411,12 @@ class Inkscape2Symbol:
                 has_outline=not self.dlg.is_no_outline()
             )
 
-            # Process SVG
-            result_svg = self.svg_processor.process(style)
+            # Process SVG (creates both preview and export versions)
+            self.svg_processor.process(style)
 
-            # Update preview
-            self.dlg.show_output_preview(result_svg)
+            # Update preview with the PREVIEW version (regular SVG for Qt rendering)
+            preview_svg = self.svg_processor.get_preview_svg()
+            self.dlg.show_output_preview(preview_svg)
 
             self._update_status(ProcessingStatus.READY)
 
