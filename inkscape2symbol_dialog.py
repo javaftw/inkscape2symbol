@@ -21,24 +21,433 @@
  *                                                                         *
  ***************************************************************************/
 """
+# -*- coding: utf-8 -*-
+"""
+Modern Dialog for Inkscape2Symbol
 
-import os
+Replaces deprecated QWebView with QSvgWidget and implements signal-based architecture.
+"""
 
-from qgis.PyQt import uic
-from qgis.PyQt import QtWidgets
+from __future__ import annotations
 
-# This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
-FORM_CLASS, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), 'inkscape2symbol_dialog_base.ui'))
+import logging
+import random
+from pathlib import Path
+from typing import Optional
+
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QSize, QByteArray
+from qgis.PyQt.QtGui import QColor, QIcon
+from qgis.PyQt.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
+    QLabel, QPushButton, QCheckBox, QMessageBox, QFileDialog,
+    QSplitter, QFrame, QComboBox
+)
+from qgis.PyQt.QtSvg import QSvgWidget
+from qgis.gui import QgsColorButton, QgsFileWidget
+
+from .config_manager import ConfigManager, ColorPreset
+
+logger = logging.getLogger(__name__)
 
 
-class Inkscape2SymbolDialog(QtWidgets.QDialog, FORM_CLASS):
-    def __init__(self, parent=None):
-        """Constructor."""
-        super(Inkscape2SymbolDialog, self).__init__(parent)
-        # Set up the user interface from Designer through FORM_CLASS.
-        # After self.setupUi() you can access any designer object by doing
-        # self.<objectname>, and you can use autoconnect slots - see
-        # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
-        # #widgets-and-dialogs-with-auto-connect
-        self.setupUi(self)
+class SVGPreviewWidget(QFrame):
+    """Widget for displaying SVG preview."""
+
+    def __init__(self, title: str, parent=None):
+        """
+        Initialize preview widget.
+
+        Args:
+            title: Title for the preview
+            parent: Parent widget
+        """
+        super().__init__(parent)
+
+        self.setFrameStyle(QFrame.Panel | QFrame.Sunken)
+        self.setMinimumSize(200, 200)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        # Title
+        title_label = QLabel(f"<b>{title}</b>")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+
+        # SVG widget
+        self.svg_widget = QSvgWidget()
+        self.svg_widget.setMinimumSize(180, 180)
+        layout.addWidget(self.svg_widget, 1)
+
+        # Info label
+        self.info_label = QLabel("")
+        self.info_label.setAlignment(Qt.AlignCenter)
+        self.info_label.setStyleSheet("color: #666; font-size: 9pt;")
+        layout.addWidget(self.info_label)
+
+    def load_svg_file(self, filepath: str) -> None:
+        """Load SVG from file."""
+        try:
+            self.svg_widget.load(filepath)
+            self.info_label.setText("")
+        except Exception as e:
+            logger.error(f"Error loading SVG preview: {e}")
+            self.info_label.setText("Preview unavailable")
+
+    def load_svg_data(self, svg_data: str) -> None:
+        """Load SVG from string data."""
+        try:
+            byte_array = QByteArray(svg_data.encode('utf-8'))
+            self.svg_widget.load(byte_array)
+            self.info_label.setText("")
+        except Exception as e:
+            logger.error(f"Error loading SVG data: {e}")
+            self.info_label.setText("Preview unavailable")
+
+    def clear(self) -> None:
+        """Clear the preview."""
+        self.svg_widget.load(QByteArray())
+        self.info_label.setText("No preview")
+
+
+class Inkscape2SymbolDialog(QDialog):
+    """
+    Modern dialog for Inkscape2Symbol plugin.
+
+    Uses signals instead of direct callback connections and replaces
+    deprecated QWebView with QSvgWidget.
+    """
+
+    # Signals
+    input_file_changed = pyqtSignal(str)
+    output_file_changed = pyqtSignal(str)
+    fill_color_changed = pyqtSignal(QColor)
+    outline_color_changed = pyqtSignal(QColor)
+    no_outline_toggled = pyqtSignal(bool)
+    reset_clicked = pyqtSignal()
+    randomize_clicked = pyqtSignal()
+    export_clicked = pyqtSignal()
+    preset_selected = pyqtSignal(ColorPreset)
+
+    def __init__(self, config_manager: ConfigManager, parent=None):
+        """
+        Initialize the dialog.
+
+        Args:
+            config_manager: Configuration manager instance
+            parent: Parent widget
+        """
+        super().__init__(parent)
+
+        self.config_manager = config_manager
+        self._setup_ui()
+        self._connect_signals()
+
+        # Restore window geometry
+        geometry = self.config_manager.get_setting('window_geometry')
+        if geometry:
+            self.restoreGeometry(geometry)
+
+        logger.info("Dialog initialized")
+
+    def _setup_ui(self) -> None:
+        """Setup the user interface."""
+        self.setWindowTitle("Inkscape2Symbol - SVG to QGIS Symbol Converter")
+        self.setMinimumSize(800, 700)
+
+        # Main layout
+        main_layout = QVBoxLayout(self)
+
+        # File selection section
+        file_group = self._create_file_selection_group()
+        main_layout.addWidget(file_group)
+
+        # Preview section (split view)
+        preview_splitter = self._create_preview_section()
+        main_layout.addWidget(preview_splitter, 1)
+
+        # Style controls section
+        style_group = self._create_style_controls_group()
+        main_layout.addWidget(style_group)
+
+        # Status and action buttons
+        bottom_layout = self._create_bottom_section()
+        main_layout.addLayout(bottom_layout)
+
+    def _create_file_selection_group(self) -> QGroupBox:
+        """Create file selection controls."""
+        group = QGroupBox("Files")
+        layout = QGridLayout(group)
+
+        # Input file
+        layout.addWidget(QLabel("Input SVG:"), 0, 0)
+        self.input_file_widget = QgsFileWidget()
+        self.input_file_widget.setStorageMode(QgsFileWidget.GetFile)
+        self.input_file_widget.setFilter("SVG files (*.svg)")
+        self.input_file_widget.setDialogTitle("Select Inkscape SVG File")
+        layout.addWidget(self.input_file_widget, 0, 1)
+
+        # File size label
+        self.file_size_label = QLabel("")
+        self.file_size_label.setStyleSheet("color: #666;")
+        layout.addWidget(self.file_size_label, 0, 2)
+
+        # Output file
+        layout.addWidget(QLabel("Output SVG:"), 1, 0)
+        self.output_file_widget = QgsFileWidget()
+        self.output_file_widget.setStorageMode(QgsFileWidget.SaveFile)
+        self.output_file_widget.setFilter("SVG files (*.svg)")
+        self.output_file_widget.setDialogTitle("Save QGIS Symbol")
+
+        # Set default output directory
+        default_output = self.config_manager.get_setting('default_output_dir', '')
+        if default_output:
+            self.output_file_widget.setDefaultRoot(default_output)
+
+        layout.addWidget(self.output_file_widget, 1, 1, 1, 2)
+
+        return group
+
+    def _create_preview_section(self) -> QSplitter:
+        """Create preview section with original and output views."""
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Original preview
+        self.original_preview = SVGPreviewWidget("Original")
+        splitter.addWidget(self.original_preview)
+
+        # Output preview
+        self.output_preview = SVGPreviewWidget("QGIS Symbol Preview")
+        splitter.addWidget(self.output_preview)
+
+        return splitter
+
+    def _create_style_controls_group(self) -> QGroupBox:
+        """Create style control widgets."""
+        group = QGroupBox("Symbol Style")
+        layout = QGridLayout(group)
+
+        # Color presets dropdown
+        layout.addWidget(QLabel("Presets:"), 0, 0)
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("-- Select Preset --", None)
+
+        # Add all presets
+        for preset in self.config_manager.get_all_presets():
+            self.preset_combo.addItem(preset.name, preset)
+
+        layout.addWidget(self.preset_combo, 0, 1, 1, 2)
+
+        # Fill color
+        layout.addWidget(QLabel("Fill Color:"), 1, 0)
+        self.fill_color_button = QgsColorButton()
+        self.fill_color_button.setMinimumSize(100, 30)
+        self.fill_color_button.setShowNull(False)
+        layout.addWidget(self.fill_color_button, 1, 1)
+
+        # Outline color
+        layout.addWidget(QLabel("Outline Color:"), 2, 0)
+        self.outline_color_button = QgsColorButton()
+        self.outline_color_button.setMinimumSize(100, 30)
+        self.outline_color_button.setShowNull(False)
+        layout.addWidget(self.outline_color_button, 2, 1)
+
+        # No outline checkbox
+        self.no_outline_checkbox = QCheckBox("No Outline")
+        layout.addWidget(self.no_outline_checkbox, 2, 2)
+
+        # Action buttons
+        button_layout = QHBoxLayout()
+
+        self.randomize_button = QPushButton("🎲 Randomize")
+        self.randomize_button.setToolTip("Generate random colors")
+        button_layout.addWidget(self.randomize_button)
+
+        self.reset_button = QPushButton("↺ Reset")
+        self.reset_button.setToolTip("Reset to original colors")
+        button_layout.addWidget(self.reset_button)
+
+        button_layout.addStretch()
+
+        layout.addLayout(button_layout, 3, 0, 1, 3)
+
+        return group
+
+    def _create_bottom_section(self) -> QHBoxLayout:
+        """Create bottom section with status and buttons."""
+        layout = QHBoxLayout()
+
+        # Status label
+        layout.addWidget(QLabel("Status:"))
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self.status_label)
+
+        layout.addStretch()
+
+        # Export button
+        self.export_button = QPushButton("💾 Export Symbol")
+        self.export_button.setMinimumHeight(35)
+        self.export_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                border-radius: 3px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        layout.addWidget(self.export_button)
+
+        # Close button
+        self.close_button = QPushButton("Close")
+        self.close_button.setMinimumHeight(35)
+        layout.addWidget(self.close_button)
+
+        return layout
+
+    def _connect_signals(self) -> None:
+        """Connect internal widget signals to dialog signals."""
+        # File widgets
+        self.input_file_widget.fileChanged.connect(
+            lambda path: self.input_file_changed.emit(path)
+        )
+        self.output_file_widget.fileChanged.connect(
+            lambda path: self.output_file_changed.emit(path)
+        )
+
+        # Color buttons
+        self.fill_color_button.colorChanged.connect(
+            lambda color: self.fill_color_changed.emit(color)
+        )
+        self.outline_color_button.colorChanged.connect(
+            lambda color: self.outline_color_changed.emit(color)
+        )
+
+        # Checkbox
+        self.no_outline_checkbox.toggled.connect(
+            lambda checked: self.no_outline_toggled.emit(checked)
+        )
+
+        # Buttons
+        self.reset_button.clicked.connect(lambda: self.reset_clicked.emit())
+        self.randomize_button.clicked.connect(lambda: self.randomize_clicked.emit())
+        self.export_button.clicked.connect(lambda: self.export_clicked.emit())
+        self.close_button.clicked.connect(self.close)
+
+        # Preset combo
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_selected)
+
+    def _on_preset_selected(self, index: int) -> None:
+        """Handle preset selection."""
+        preset = self.preset_combo.itemData(index)
+        if preset and isinstance(preset, ColorPreset):
+            self.set_fill_color(QColor(preset.fill_color))
+            self.set_outline_color(QColor(preset.outline_color))
+            self.no_outline_checkbox.setChecked(not preset.has_outline)
+            self.preset_selected.emit(preset)
+
+    # Public methods for controlling the UI
+
+    def set_fill_color(self, color: QColor) -> None:
+        """Set fill color."""
+        self.fill_color_button.setColor(color)
+
+    def get_fill_color(self) -> QColor:
+        """Get current fill color."""
+        return self.fill_color_button.color()
+
+    def set_outline_color(self, color: QColor) -> None:
+        """Set outline color."""
+        self.outline_color_button.setColor(color)
+
+    def get_outline_color(self) -> QColor:
+        """Get current outline color."""
+        return self.outline_color_button.color()
+
+    def is_no_outline(self) -> bool:
+        """Check if no outline is selected."""
+        return self.no_outline_checkbox.isChecked()
+
+    def set_outline_enabled(self, enabled: bool) -> None:
+        """Enable/disable outline controls."""
+        self.outline_color_button.setEnabled(enabled)
+
+    def set_output_directory(self, directory: str) -> None:
+        """Set default output directory."""
+        if directory:
+            self.output_file_widget.setDefaultRoot(directory)
+
+    def get_output_file(self) -> str:
+        """Get output file path."""
+        return self.output_file_widget.filePath()
+
+    def show_original_preview(self, filepath: str) -> None:
+        """Show original SVG preview."""
+        self.original_preview.load_svg_file(filepath)
+
+    def show_output_preview(self, svg_data: str) -> None:
+        """Show output SVG preview."""
+        self.output_preview.load_svg_data(svg_data)
+
+    def clear_preview(self) -> None:
+        """Clear both previews."""
+        self.original_preview.clear()
+        self.output_preview.clear()
+
+    def set_file_size(self, size_bytes: int) -> None:
+        """Set file size display."""
+        size_kb = size_bytes / 1024
+        self.file_size_label.setText(f"{size_kb:.2f} KB")
+
+    def set_status(self, status: str) -> None:
+        """Set status message."""
+        self.status_label.setText(status)
+
+        # Color code based on status
+        colors = {
+            'ready': '#4CAF50',
+            'processing': '#FF9800',
+            'error': '#F44336',
+            'saved': '#2196F3',
+        }
+        color = colors.get(status.lower(), '#000000')
+        self.status_label.setStyleSheet(f"font-weight: bold; color: {color};")
+
+    def randomize_colors(self) -> None:
+        """Generate and set random colors."""
+        self.set_fill_color(self._random_color())
+        self.set_outline_color(self._random_color())
+
+    @staticmethod
+    def _random_color() -> QColor:
+        """Generate a random color."""
+        return QColor(
+            random.randint(50, 255),
+            random.randint(50, 255),
+            random.randint(50, 255)
+        )
+
+    def show_error(self, message: str) -> None:
+        """Show error message."""
+        QMessageBox.critical(self, "Error", message)
+
+    def show_warning(self, message: str) -> None:
+        """Show warning message."""
+        QMessageBox.warning(self, "Warning", message)
+
+    def show_success(self, message: str) -> None:
+        """Show success message."""
+        QMessageBox.information(self, "Success", message)
+
+    def closeEvent(self, event) -> None:
+        """Handle dialog close event."""
+        # Save window geometry
+        self.config_manager.set_setting('window_geometry', self.saveGeometry())
+        super().closeEvent(event)

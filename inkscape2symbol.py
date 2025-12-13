@@ -21,64 +21,179 @@
  *                                                                         *
  ***************************************************************************/
 """
-import os.path
-from random import randint
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QUrl
-from qgis.PyQt.QtGui import QIcon, QColor
-from qgis.PyQt.QtWidgets import QAction
+# -*- coding: utf-8 -*-
+"""
+Inkscape2Symbol - Modern QGIS Plugin
+Convert Inkscape SVG drawings into QGIS-compatible symbols
 
-# Initialize Qt resources from file resources.py
-from .resources import *
+Author: Hennie Kotze (modernized)
+License: GPL v2+
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
+from enum import Enum
+
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, pyqtSignal
+from qgis.PyQt.QtGui import QIcon, QColor
+from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.core import QgsApplication
+
 # Import the code for the dialog
 from .inkscape2symbol_dialog import Inkscape2SymbolDialog
+from .svg_processor import SVGProcessor, SVGProcessingError
+from .config_manager import ConfigManager
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+class ProcessingStatus(Enum):
+    """Status of SVG processing operations."""
+    IDLE = "idle"
+    LOADING = "loading"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
+    SAVED = "saved"
+
+
+@dataclass
+class SymbolStyle:
+    """Container for symbol style parameters."""
+    fill_color: QColor
+    outline_color: QColor
+    outline_width: float = 0.2
+    has_outline: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert style to dictionary for serialization."""
+        return {
+            'fill': self.fill_color.name(),
+            'outline': self.outline_color.name(),
+            'outline_width': self.outline_width,
+            'has_outline': self.has_outline
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> SymbolStyle:
+        """Create style from dictionary."""
+        return cls(
+            fill_color=QColor(data['fill']),
+            outline_color=QColor(data['outline']),
+            outline_width=data.get('outline_width', 0.2),
+            has_outline=data.get('has_outline', True)
+        )
+
 
 class Inkscape2Symbol:
-    """QGIS Plugin Implementation."""
+    """
+    QGIS Plugin Implementation for converting Inkscape SVG to QGIS symbols.
+
+    This plugin provides a user-friendly interface for converting SVG files
+    created in Inkscape into QGIS-compatible parametric symbols.
+    """
 
     def __init__(self, iface):
-        """Constructor.
+        """
+        Initialize the plugin.
 
-        :param iface: An interface instance that will be passed to this class
-            which provides the hook by which you can manipulate the QGIS
-            application at run time.
-        :type iface: QgsInterface
+        Args:
+            iface: A QGIS interface instance that provides hooks to manipulate
+                   the QGIS application at runtime.
         """
         self.iface = iface
-        self.plugin_dir = os.path.dirname(__file__)
-        self.actions = []
-        self.menu = self.tr(u'&Inkscape2Symbol')
-        self.first_start = None
-        self.svgMem = MemSVG()
-        
-        # Initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
-        locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            'Inkscape2Symbol_{}.qm'.format(locale))
+        self.plugin_dir = Path(__file__).parent
+        self.actions: List[QAction] = []
+        self.menu = self.tr('&Inkscape2Symbol')
+        self.first_start: Optional[bool] = None
 
-        if os.path.exists(locale_path):
+        # Initialize components
+        self.config_manager = ConfigManager(self.plugin_dir)
+        self.svg_processor: Optional[SVGProcessor] = None
+        self.dlg: Optional[Inkscape2SymbolDialog] = None
+        self._current_status = ProcessingStatus.IDLE
+
+        # Initialize locale
+        self._setup_translation()
+
+        # Setup logging
+        self._setup_logging()
+
+    def _setup_logging(self) -> None:
+        """Configure logging for the plugin."""
+        log_level = self.config_manager.get_setting('log_level', 'INFO')
+        logging.basicConfig(
+            level=getattr(logging, log_level),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        logger.info("Inkscape2Symbol plugin initialized")
+
+    def _setup_translation(self) -> None:
+        """Initialize translation support."""
+        locale = QSettings().value('locale/userLocale', 'en')[:2]
+        locale_path = self.plugin_dir / 'i18n' / f'Inkscape2Symbol_{locale}.qm'
+
+        if locale_path.exists():
             self.translator = QTranslator()
-            self.translator.load(locale_path)
+            self.translator.load(str(locale_path))
             QCoreApplication.installTranslator(self.translator)
 
-    def tr(self, message):
-        """Get the translation for a string using Qt translation API."""
+    def tr(self, message: str) -> str:
+        """
+        Get the translation for a string using Qt translation API.
+
+        Args:
+            message: String to translate
+
+        Returns:
+            Translated string
+        """
         return QCoreApplication.translate('Inkscape2Symbol', message)
 
-    def add_action(self, icon_path, text, callback, enabled_flag=True,
-                   add_to_menu=True, add_to_toolbar=True, status_tip=None,
-                   whats_this=None, parent=None):
-        """Add a toolbar icon to the toolbar."""
+    def add_action(
+            self,
+            icon_path: str,
+            text: str,
+            callback,
+            enabled_flag: bool = True,
+            add_to_menu: bool = True,
+            add_to_toolbar: bool = True,
+            status_tip: Optional[str] = None,
+            whats_this: Optional[str] = None,
+            parent=None
+    ) -> QAction:
+        """
+        Add a toolbar icon to the toolbar.
+
+        Args:
+            icon_path: Path to the icon for this action
+            text: Text to display for this action
+            callback: Function to be called when action is triggered
+            enabled_flag: Whether action is enabled by default
+            add_to_menu: Whether to add action to menu
+            add_to_toolbar: Whether to add action to toolbar
+            status_tip: Optional status tip to show on hover
+            whats_this: Optional "What's This?" text
+            parent: Parent widget
+
+        Returns:
+            The action that was created
+        """
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
         action.triggered.connect(callback)
         action.setEnabled(enabled_flag)
 
-        if status_tip is not None:
+        if status_tip:
             action.setStatusTip(status_tip)
 
-        if whats_this is not None:
+        if whats_this:
             action.setWhatsThis(whats_this)
 
         if add_to_toolbar:
@@ -90,344 +205,271 @@ class Inkscape2Symbol:
         self.actions.append(action)
         return action
 
-    def initGui(self):
+    def initGui(self) -> None:
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
         icon_path = ':/plugins/inkscape2symbol/icon.png'
         self.add_action(
             icon_path,
-            text=self.tr(u'Convert Inkscape SVG into symbol'),
+            text=self.tr('Convert Inkscape SVG to Symbol'),
             callback=self.run,
-            parent=self.iface.mainWindow())
-
+            status_tip=self.tr('Convert SVG files to QGIS symbols'),
+            parent=self.iface.mainWindow()
+        )
         self.first_start = True
+        logger.info("Plugin GUI initialized")
 
-    def unload(self):
-        """Removes the plugin menu item and icon from QGIS GUI."""
+    def unload(self) -> None:
+        """Remove the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
-            self.iface.removePluginMenu(self.tr(u'&Inkscape2Symbol'), action)
+            self.iface.removePluginMenu(self.tr('&Inkscape2Symbol'), action)
             self.iface.removeToolBarIcon(action)
+        logger.info("Plugin unloaded")
 
-    def run(self):
-        """Run method that performs all the real work"""
+    def run(self) -> None:
+        """Run method that performs all the real work."""
+        logger.info("Plugin run method called")
+
+        # Create dialog on first run
         if self.first_start:
             self.first_start = False
-            self.dlg = Inkscape2SymbolDialog()
+            self.dlg = Inkscape2SymbolDialog(self.config_manager)
+            self._connect_signals()
 
-        # Connect signals
-        self.dlg.inputfile.fileChanged.connect(self.infileChangedAction)
-        self.dlg.outputfolder.fileChanged.connect(self.outfileChangedAction)
-        self.dlg.fillColour.colorChanged.connect(self.fillColAction)
-        self.dlg.outlineColour.colorChanged.connect(self.outlineColAction)
-        self.dlg.btnExportSVG.clicked.connect(self.writeSVG)
-        self.dlg.cbNoOutline.toggled.connect(self.setNoOutline)
-        self.dlg.btnReset.clicked.connect(self.resetAction)
-        self.dlg.btnRandomize.clicked.connect(self.randomizeAction)
+        # Initialize processor
+        self.svg_processor = SVGProcessor()
 
-        # Set up UI
-        self.dlg.inputfile.setFilter("*.svg")
-        self.dlg.outputfolder.setStorageMode(3)
-        self.dlg.fillColour.setColor(QColor(220, 220, 220, 255))
-        self.dlg.outlineColour.setColor(QColor(0, 0, 0, 255))
+        # Setup UI with saved settings
+        self._setup_ui()
 
         # Show the dialog
         self.dlg.show()
-        self.dlg.outputfolder.lineEdit().setValue("")
-        self.dlg.webViewOutput.setHtml("")
-        self.dlg.lblFileSize.setText("")
-
-        # Run the dialog event loop
         result = self.dlg.exec_()
-        
-        # See if OK was pressed
-        if result:
-            self.recompileSvg()
 
-    def recompileSvg(self):
-        """Recompile the SVG with new colors and settings"""
-        if self.svgMem.data is None:
+        # Process result
+        if result:
+            self._save_symbol()
+
+    def _connect_signals(self) -> None:
+        """Connect all dialog signals to handlers."""
+        if not self.dlg:
             return
 
-        svgcontent = self.svgMem.text
-        
-        # Check if SVG has already been processed
-        if "i2s=" in svgcontent:
-            self.updateExistingSvg(svgcontent)
-        else:
-            self.createNewSvg(svgcontent)
+        # File selection signals
+        self.dlg.input_file_changed.connect(self._on_input_file_changed)
+        self.dlg.output_file_changed.connect(self._on_output_file_changed)
 
-    def updateExistingSvg(self, svgcontent):
-        """Update an existing processed SVG"""
-        svg_parts = svgcontent.split("<")
-        for svg_part in svg_parts:
-            if "fill:" in svg_part:
-                svgcontent = self.replaceAttribute(svgcontent, svg_part, "fill:", self.dlg.fillColour.color().name())
-            if "stroke:" in svg_part:
-                svgcontent = self.replaceAttribute(svgcontent, svg_part, "stroke:", self.dlg.outlineColour.color().name())
-            if "stroke-width:" in svg_part:
-                tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
-                svgcontent = self.replaceAttribute(svgcontent, svg_part, "stroke-width:", tempwidth)
-            if "fill=" in svg_part:
-                svgcontent = self.replaceParameter(svgcontent, svg_part, "fill=", self.dlg.fillColour.color().name())
-            if "stroke=" in svg_part:
-                svgcontent = self.replaceParameter(svgcontent, svg_part, "stroke=", self.dlg.outlineColour.color().name())
-            if "stroke-width=" in svg_part:
-                tempwidth = "0.0" if self.dlg.cbNoOutline.isChecked() else "0.2"
-                svgcontent = self.replaceParameter(svgcontent, svg_part, "stroke-width=", tempwidth)
-        
-        self.svgMem.setText(svgcontent)
-        self.dlg.lblStatus.setText("Modified")
+        # Color change signals
+        self.dlg.fill_color_changed.connect(self._on_fill_color_changed)
+        self.dlg.outline_color_changed.connect(self._on_outline_color_changed)
 
-    def replaceAttribute(self, content, part, attr, value):
-        """Replace an attribute in the SVG content"""
-        idxS = part.find(attr)
-        idxE = part.find(";", idxS)
-        return content.replace(part[idxS:idxE], f"{attr}{value}")
+        # Control signals
+        self.dlg.no_outline_toggled.connect(self._on_no_outline_toggled)
+        self.dlg.reset_clicked.connect(self._on_reset_clicked)
+        self.dlg.randomize_clicked.connect(self._on_randomize_clicked)
+        self.dlg.export_clicked.connect(self._on_export_clicked)
 
-    def replaceParameter(self, content, part, param, value):
-        """Replace a parameter in the SVG content"""
-        idxS = part.find(param)
-        idxE = part.find("\"", idxS + len(param) + 1)
-        return content.replace(part[idxS:idxE+1], f'{param}"param({param.rstrip("=")}) {value}"')
+    def _setup_ui(self) -> None:
+        """Setup UI with default or saved values."""
+        if not self.dlg:
+            return
 
-    def createNewSvg(self, svgcontent):
-        """Create a new processed SVG"""
-        svgcontent = self.cleanupSvgContent(svgcontent)
-        
-        new_svg_tag, svg_attrib_vals = self.extractSvgAttributes(svgcontent)
-        gcontent_arr = self.extractGContent(svgcontent)
-        
-        new_gcontent = self.createNewGContent(gcontent_arr)
-        new_svg = new_svg_tag.replace("*", gcontent_arr[0] + new_gcontent + "</g>")
-        
-        new_svg = self.removeNamespaces(new_svg)
-        self.svgMem.setText(new_svg)
-        self.dlg.lblStatus.setText("Modified")
+        # Load saved colors or use defaults
+        default_fill = self.config_manager.get_setting(
+            'default_fill_color',
+            '#DCDCDC'
+        )
+        default_outline = self.config_manager.get_setting(
+            'default_outline_color',
+            '#000000'
+        )
 
-    def cleanupSvgContent(self, content):
-        """Clean up SVG content by removing unnecessary whitespace"""
-        content = content.replace("\n", " ")
-        while "  " in content:
-            content = content.replace("  ", " ")
-        return content
+        self.dlg.set_fill_color(QColor(default_fill))
+        self.dlg.set_outline_color(QColor(default_outline))
 
-    def extractSvgAttributes(self, content):
-        """Extract SVG attributes from the content"""
-        new_svg_tag = '<svg i2s="yes" enable-background="new {2}" width="{0}" height="{1}" viewBox="{2}" xmlns="http://www.w3.org/2000/svg">*</svg>'
-        svg_attrib_vals = []
-        
-        if "<svg " in content:
-            idxS = content.find("<svg ")
-            idxE = content.find(">", idxS)
-            svgtag = content[idxS:idxE]
-            
-            for attr in ["width=", "height=", "viewBox="]:
-                if attr in svgtag:
-                    idxS = svgtag.find(attr)
-                    idxE = svgtag.find("\"", idxS + len(attr) + 1)
-                    svg_attrib_vals.append(svgtag[idxS + len(attr) + 1:idxE])
-            
-            new_svg_tag = new_svg_tag.format(*svg_attrib_vals)
-        
-        return new_svg_tag, svg_attrib_vals
+        # Load default output directory
+        default_output = self.config_manager.get_setting(
+            'default_output_dir',
+            str(Path.home())
+        )
+        self.dlg.set_output_directory(default_output)
 
-    def extractGContent(self, content):
-        """Extract g content from SVG"""
-        gcontent_arr = []
-        if "<g " in content:
-            indexStart = content.find("<g ")
-            indexEnd = content.find("</g>", indexStart)
-            gcontent = content[indexStart:indexEnd + 4]
-            gcontent = gcontent.replace("><", ">\n<")
-            gcontent = gcontent.replace("> <", ">\n<")
-            gcontent_arr = gcontent.split("\n")
-        return gcontent_arr
+        self._update_status(ProcessingStatus.IDLE)
 
-    def createNewGContent(self, gcontent_arr):
-        """Create new g content with updated styles"""
-        new_style_attrib = 'style="opacity:1;fill:{0};fill-opacity:1;stroke:{1};stroke-width:{2};stroke-opacity:1" fill="param(fill) {0}" stroke="param(outline) {1}" stroke-width="param(outline-width) {2}"'
-        new_gcontent = ""
-        
-        if len(gcontent_arr) > 1:
-            if "transform" in gcontent_arr[0]:
-                stemp = gcontent_arr[0]
-                idxS = stemp.find("transform")
-                idxE = stemp.find("\"", idxS + 11)
-                gcontent_arr[0] = "<g {0}>".format(stemp[idxS:idxE + 1])
-            
-            for s in gcontent_arr[1:]:
-                if "style=" in s:
-                    idxS = s.find("style=\"")
-                    idxE = s.find("\"", idxS + 7)
-                    s1 = s[idxS:idxE + 1]
-                    s2 = s.replace(s1, new_style_attrib.format(
-                        self.dlg.fillColour.color().name(),
-                        self.dlg.outlineColour.color().name(),
-                        "0.2"
-                    ))
-                    new_gcontent += s2
-        
-        return new_gcontent
+    def _on_input_file_changed(self, filepath: str) -> None:
+        """
+        Handle input file selection.
 
-    def removeNamespaces(self, svg):
-        """Remove Inkscape and Sodipodi namespaces from SVG"""
-        for ns in ["inkscape", "sodipodi"]:
-            while ns in svg:
-                idxS = svg.find(ns)
-                idxE = svg.find(" ", idxS)
-                s1 = svg[idxS:idxE]
-                svg = svg.replace(s1, "")
-        return svg.replace("</g></g>", "</g>")
+        Args:
+            filepath: Path to the selected SVG file
+        """
+        logger.info(f"Input file changed: {filepath}")
 
-    def infileChangedAction(self):
-        """Handle input file change"""
+        if not filepath or not Path(filepath).exists():
+            self._update_status(ProcessingStatus.IDLE)
+            self.dlg.clear_preview()
+            return
+
         try:
-            if os.path.isfile(self.dlg.inputfile.filePath()) and self.dlg.inputfile.filePath().endswith(".svg"):
-                self.dlg.lblFileSize.setText("{:.2f}kB".format(os.path.getsize(self.dlg.inputfile.filePath()) / 1024))
-                self.svgMem.setData(self.readSVGFile(self.dlg.inputfile.filePath()))
-                svgcontent = self.svgMem.text
-                if ("inkscape" in svgcontent) or ("xmlns:" in svgcontent):
-                    self.dlg.webViewOriginal.load(QUrl('file://' + self.dlg.inputfile.filePath()))
-                    self.dlg.fillColour.setColor(QColor(self.svgMem.fill_original))
-                    self.dlg.outlineColour.setColor(QColor(self.svgMem.outline_original))
-                    self.drawMemSVG()
-                else:
-                    self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>Not recognized as a<br>supported SVG format</span>")
-                    self.svgMem.clear()
-                    self.drawMemSVG()
-            else:
-                self.dlg.webViewOriginal.setHtml("<span style='font-family:sans-serif;font-size:11px;'>No SVG file selected</span>")
-                self.svgMem.clear()
-                self.drawMemSVG()
-                self.dlg.lblFileSize.setText("")
-        except Exception as ex:
-            print(ex)
+            self._update_status(ProcessingStatus.LOADING)
 
-    def outfileChangedAction(self):
-        """Handle output file change"""
-        self.drawMemSVG()
+            # Validate file
+            file_path = Path(filepath)
+            if not file_path.suffix.lower() == '.svg':
+                raise ValueError("Selected file is not an SVG")
 
-    def outlineColAction(self):
-        """Handle outline color change"""
-        self.recompileSvg()
-        self.outfileChangedAction()
+            # Load and process SVG
+            self.svg_processor.load_svg(file_path)
 
-    def fillColAction(self):
-        """Handle fill color change"""
-        self.recompileSvg()
-        self.outfileChangedAction()
+            # Update UI with original colors
+            original_style = self.svg_processor.get_original_style()
+            if original_style:
+                self.dlg.set_fill_color(original_style.fill_color)
+                self.dlg.set_outline_color(original_style.outline_color)
 
-    def readSVGFile(self, filepath):
-        """Read SVG file content"""
-        with open(filepath, 'rb') as inputsvg:
-            return inputsvg.read()
+            # Show preview
+            self.dlg.show_original_preview(filepath)
+            self.dlg.set_file_size(file_path.stat().st_size)
 
-    def writeSVG(self):
-        """Write SVG file"""
-        if len(self.dlg.outputfolder.filePath()) > 0:
-            outfolder = self.dlg.outputfolder.filePath()
-            if not outfolder.endswith(".svg"):
-                outfolder += ".svg"
-            try:
-                with open(outfolder, 'w') as outputsvg:
-                    outputsvg.write(self.svgMem.text)
-                self.dlg.lblStatus.setText("Saved")
-            except PermissionError:
-                self.dlg.lblStatus.setText("Permission denied")
-            except Exception as e:
-                self.dlg.lblStatus.setText(f"Error: {str(e)}")
-        else:
-            self.dlg.lblStatus.setText("Not saved")
+            # Process with current settings
+            self._process_svg()
 
-    def drawMemSVG(self):
-        """Draw SVG in memory"""
-        if self.svgMem.data is not None:
-            self.dlg.webViewOutput.setContent(self.svgMem.data, "image/svg+xml")
-            self.dlg.lblStatus.setText("Modified")
-        else:
-            self.dlg.webViewOutput.setHtml("")
+        except SVGProcessingError as e:
+            logger.error(f"SVG processing error: {e}")
+            self._update_status(ProcessingStatus.ERROR)
+            self.dlg.show_error(str(e))
+        except Exception as e:
+            logger.exception("Unexpected error loading SVG")
+            self._update_status(ProcessingStatus.ERROR)
+            self.dlg.show_error(f"Error loading file: {str(e)}")
 
-    def setNoOutline(self):
-        """Set no outline for SVG"""
-        if self.svgMem.data is not None:
-            self.recompileSvg()
-            self.drawMemSVG()
+    def _on_output_file_changed(self, filepath: str) -> None:
+        """
+        Handle output file selection.
 
-    def resetAction(self):
-        """Reset SVG to original colors"""
-        if self.svgMem.data is not None:
-            self.dlg.fillColour.setColor(QColor(self.svgMem.fill_original))
-            self.dlg.outlineColour.setColor(QColor(self.svgMem.outline_original))
-            self.recompileSvg()
-            self.drawMemSVG()
+        Args:
+            filepath: Path where the symbol will be saved
+        """
+        logger.info(f"Output file changed: {filepath}")
 
-    def randomizeAction(self):
-        """Randomize SVG colors"""
-        self.dlg.fillColour.setColor(QColor(self.randomColor()))
-        self.dlg.outlineColour.setColor(QColor(self.randomColor()))
-        if self.svgMem.data is not None:
-            self.recompileSvg()
-            self.drawMemSVG()
+        # Save as default for next time
+        if filepath:
+            output_dir = str(Path(filepath).parent)
+            self.config_manager.set_setting('default_output_dir', output_dir)
 
-    @staticmethod
-    def randomColor():
-        """Generate a random color"""
-        return "#" + ''.join([hex(randint(0, 255))[2:].zfill(2) for _ in range(3)])
+    def _on_fill_color_changed(self, color: QColor) -> None:
+        """Handle fill color change."""
+        logger.debug(f"Fill color changed to: {color.name()}")
+        self._process_svg()
 
-class MemSVG:
-    """Class to handle SVG in memory"""
+    def _on_outline_color_changed(self, color: QColor) -> None:
+        """Handle outline color change."""
+        logger.debug(f"Outline color changed to: {color.name()}")
+        self._process_svg()
 
-    def __init__(self):
-        self.width = ""
-        self.height = ""
-        self.fill_original = ""
-        self.fill = ""
-        self.outline_original = ""
-        self.outline = ""
-        self.text = ""
-        self.data = None
+    def _on_no_outline_toggled(self, checked: bool) -> None:
+        """Handle no outline checkbox toggle."""
+        logger.debug(f"No outline toggled: {checked}")
+        self.dlg.set_outline_enabled(not checked)
+        self._process_svg()
 
-    def setData(self, d):
-        """Set SVG data"""
-        self.data = d
-        self.text = d.decode("utf-8")
-        self.parse()
+    def _on_reset_clicked(self) -> None:
+        """Reset colors to original values."""
+        logger.info("Reset to original colors")
 
-    def setText(self, t):
-        """Set SVG text"""
-        self.text = t
-        self.data = str.encode(t)
-        self.parse()
+        if not self.svg_processor:
+            return
 
-    def clear(self):
-        """Clear all SVG data"""
-        self.width = ""
-        self.height = ""
-        self.fill_original = ""
-        self.fill = ""
-        self.outline_original = ""
-        self.outline = ""
-        self.text = ""
-        self.data = None
+        original_style = self.svg_processor.get_original_style()
+        if original_style:
+            self.dlg.set_fill_color(original_style.fill_color)
+            self.dlg.set_outline_color(original_style.outline_color)
+            self._process_svg()
 
-    def parse(self):
-        """Parse SVG content"""
-        self.parseFill()
-        self.parseOutline()
+    def _on_randomize_clicked(self) -> None:
+        """Randomize colors."""
+        logger.info("Randomizing colors")
+        self.dlg.randomize_colors()
+        self._process_svg()
 
-    def parseFill(self):
-        """Parse fill color from SVG"""
-        if "fill:" in self.text:
-            idxS = self.text.find("fill:")
-            idxE = self.text.find(";", idxS)
-            self.fill = self.text[idxS + 5:idxE]
-            if not self.fill_original:
-                self.fill_original = self.fill
+    def _on_export_clicked(self) -> None:
+        """Handle export button click."""
+        self._save_symbol()
 
-    def parseOutline(self):
-        """Parse outline color from SVG"""
-        if "stroke:" in self.text:
-            idxS = self.text.find("stroke:")
-            idxE = self.text.find(";", idxS)
-            self.outline = self.text[idxS + 7:idxE]
-            if not self.outline_original:
-                self.outline_original = self.outline
+    def _process_svg(self) -> None:
+        """Process SVG with current settings and update preview."""
+        if not self.svg_processor or not self.svg_processor.is_loaded():
+            return
+
+        try:
+            self._update_status(ProcessingStatus.PROCESSING)
+
+            # Get current style from UI
+            style = SymbolStyle(
+                fill_color=self.dlg.get_fill_color(),
+                outline_color=self.dlg.get_outline_color(),
+                outline_width=0.0 if self.dlg.is_no_outline() else 0.2,
+                has_outline=not self.dlg.is_no_outline()
+            )
+
+            # Process SVG
+            result_svg = self.svg_processor.process(style)
+
+            # Update preview
+            self.dlg.show_output_preview(result_svg)
+
+            self._update_status(ProcessingStatus.READY)
+
+        except SVGProcessingError as e:
+            logger.error(f"Processing error: {e}")
+            self._update_status(ProcessingStatus.ERROR)
+            self.dlg.show_error(str(e))
+        except Exception as e:
+            logger.exception("Unexpected error processing SVG")
+            self._update_status(ProcessingStatus.ERROR)
+            self.dlg.show_error(f"Processing error: {str(e)}")
+
+    def _save_symbol(self) -> None:
+        """Save the processed symbol to file."""
+        if not self.svg_processor or not self.svg_processor.is_loaded():
+            self.dlg.show_warning("No SVG loaded to save")
+            return
+
+        output_path = self.dlg.get_output_file()
+        if not output_path:
+            self.dlg.show_warning("Please select an output file")
+            return
+
+        try:
+            # Ensure .svg extension
+            output_path = Path(output_path)
+            if output_path.suffix.lower() != '.svg':
+                output_path = output_path.with_suffix('.svg')
+
+            # Save the processed SVG
+            result_svg = self.svg_processor.get_processed_svg()
+            output_path.write_text(result_svg, encoding='utf-8')
+
+            self._update_status(ProcessingStatus.SAVED)
+            logger.info(f"Symbol saved to: {output_path}")
+
+            # Show success message
+            self.dlg.show_success(f"Symbol saved successfully to {output_path.name}")
+
+        except PermissionError:
+            logger.error("Permission denied writing file")
+            self.dlg.show_error("Permission denied. Please choose another location.")
+        except Exception as e:
+            logger.exception("Error saving symbol")
+            self.dlg.show_error(f"Error saving file: {str(e)}")
+
+    def _update_status(self, status: ProcessingStatus) -> None:
+        """
+        Update the current processing status.
+
+        Args:
+            status: New processing status
+        """
+        self._current_status = status
+        if self.dlg:
+            self.dlg.set_status(status.value)
+        logger.debug(f"Status updated to: {status.value}")
