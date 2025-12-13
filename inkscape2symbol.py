@@ -49,6 +49,7 @@ from qgis.core import QgsApplication
 from .inkscape2symbol_dialog import Inkscape2SymbolDialog
 from .svg_processor import SVGProcessor, SVGProcessingError
 from .config_manager import ConfigManager
+from .symbol_style import SymbolStyle
 
 # Configure logging
 logger = logging.getLogger(__name__)

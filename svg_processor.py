@@ -450,4 +450,4 @@ class SVGProcessor:
 
 
 # Import SymbolStyle from main module
-from .inkscape2symbol import SymbolStyle
+from .symbol_style import SymbolStyle

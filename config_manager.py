@@ -16,6 +16,8 @@ from dataclasses import dataclass, asdict
 from qgis.PyQt.QtCore import QSettings
 from qgis.PyQt.QtGui import QColor
 
+from .symbol_style import SymbolStyle
+
 logger = logging.getLogger(__name__)
 
 
